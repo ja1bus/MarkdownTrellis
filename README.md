@@ -9,7 +9,7 @@ MarkdownTrellis は、Notepad++ で Markdown を編集しやすくするプラ�
 - プレビュー: 入力に合わせて更新します。Notepad++ のドッキングパネルに表示します。
 - 書式ボタン: 太字、斜体、取り消し線、インラインコード、見出し、箇条書き、番号付きリスト、チェックリスト、引用、コードブロック、表、リンク、画像、水平線
 - 原文コピー: 文書全体を書かれているとおりコピーします（未保存の内容を含む）。
-- Teams用コピー: プレビューの内容を書式付きでコピーします。Teams やメールなどに貼り付けると、見出し、表、太字、リンクが保たれます。
+- 書式付きコピー: プレビューの内容を書式付きでコピーします。Teams やメールなどに貼り付けると、見出し、表、太字、リンクが保たれます。
 - 基本の構文: GFM（既定）と CommonMark を切り替えられます。Frontmatter はプレビューに表示しません。
 - 追加構文: アラート、脚注、数式（文字のまま表示）、コンテナ、ハイライト、Wikiリンク、定義リストをタブごとに有効にできます。
 - 全体を囲むコードフェンスの検出: 文書全体が ```` ```markdown ```` で囲まれているときに通知します。外側の2行だけを解除することもできます（Undo 可）。
@@ -44,7 +44,7 @@ WebView2 を起動できない場合は、IE エンジンによる代替表示�
 
 ## インストール
 
-配布物は [Releases](https://github.com/ja1bus/MarkdownTrellis/releases/latest) の `MarkdownTrellis-<版>-x64.zip` です。
+配布物は [Releases](https://github.com/ja1bus/MarkdownTrellis/releases/latest) の `MarkdownTrellis-<版>-x64.zip` です。画面付きの手順は [取扱説明書](https://www.ja1bus.com/markdowntrellis/manual/#install) を参照してください。
 
 DLL に電子署名はしていません。そのため、次の点に注意してください。
 
@@ -99,7 +99,7 @@ Notepad++ を閉じて、`plugins\MarkdownTrellis` フォルダを削除しま�
 1. Notepad++ を起動します。ツールバーのアイコン（緑の四角に白い M）か、［プラグイン］→［MarkdownTrellis］からパネルを表示します。
 2. `.md` などの Markdown ファイルか無題の文書では、プレビューが自動で表示されます。
 3. 文字を選択してパネルのボタンを押すと、書式を適用できます。編集支援とコピーはメニューからも使えます。
-4. ［原文コピー］または［Teams用コピー］でコピーします。
+4. ［原文コピー］または［書式付きコピー］でコピーします。
 
 プラグインのコマンドには既定のショートカットを割り当てていません。必要な場合は Notepad++ の Shortcut Mapper で割り当てられます。
 
@@ -173,4 +173,5 @@ Notepad++、Microsoft Teams は各権利者の製品です。このプラグイ�
 ## 関連リンク
 
 - Releases: https://github.com/ja1bus/MarkdownTrellis/releases
+- 取扱説明書: https://www.ja1bus.com/markdowntrellis/manual/
 - Microsoft Edge WebView2: https://developer.microsoft.com/microsoft-edge/webview2/

@@ -9,7 +9,7 @@ MarkdownTrellis is a Notepad++ plugin that makes Markdown easier to edit. It add
 - Preview: updates as you type and appears in a Notepad++ docking panel.
 - Formatting buttons: bold, italic, strikethrough, inline code, headings, bulleted list, numbered list, checklist, quote, code block, table, link, image, horizontal rule
 - Copy Source: copies the whole document exactly as written, including unsaved changes.
-- Copy for Teams: copies the preview with its formatting. Paste it into Teams, an email, and so on to keep headings, tables, bold text, and links.
+- Copy Formatted: copies the preview with its formatting. Paste it into Teams, an email, and so on to keep headings, tables, bold text, and links.
 - Base syntax: switch between GFM (default) and CommonMark. Frontmatter is not shown in the preview.
 - Extra syntax: enable alerts, footnotes, math (shown as text), containers, highlight, wiki links, and definition lists per tab.
 - Outer code fence detection: notifies you when the whole document is wrapped in ```` ```markdown ````. You can remove just the two outer lines (undoable).
@@ -44,7 +44,7 @@ On PCs that switch to the fallback preview, each startup waits while WebView2 is
 
 ## Installation
 
-Download `MarkdownTrellis-<version>-x64.zip` from [Releases](https://github.com/ja1bus/MarkdownTrellis/releases/latest).
+Download `MarkdownTrellis-<version>-x64.zip` from [Releases](https://github.com/ja1bus/MarkdownTrellis/releases/latest). For step-by-step instructions with screenshots, see the [user guide](https://www.ja1bus.com/markdowntrellis/en/manual/#install).
 
 The DLL is not digitally signed, so note the following:
 
@@ -99,7 +99,7 @@ Close Notepad++ and delete the `plugins\MarkdownTrellis` folder. To also remove 
 1. Start Notepad++. Show the panel with the toolbar icon (a white M on a green square) or from **Plugins** > **MarkdownTrellis**.
 2. The preview appears automatically for Markdown files such as `.md` and for untitled documents.
 3. Select text and press a panel button to apply formatting. Editing and copy commands are also on the menu.
-4. Copy with **Copy Source** or **Copy for Teams**.
+4. Copy with **Copy Source** or **Copy Formatted**.
 
 The plugin assigns no default shortcuts. You can assign them in the Notepad++ Shortcut Mapper.
 
@@ -173,4 +173,5 @@ This project does not provide a contact point for questions or bug reports.
 ## Links
 
 - Releases: https://github.com/ja1bus/MarkdownTrellis/releases
+- User guide: https://www.ja1bus.com/markdowntrellis/en/manual/
 - Microsoft Edge WebView2: https://developer.microsoft.com/microsoft-edge/webview2/
