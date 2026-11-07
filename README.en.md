@@ -40,6 +40,8 @@ If WebView2 cannot start, the plugin automatically switches to a fallback previe
 - Notifications such as outer code fence detection, syntax normalization, and language switching are not available from the panel. Removing an outer code fence is still available from the menu.
 - The IE engine is less protected than WebView2 and may be removed from Windows in the future.
 
+On PCs that switch to the fallback preview, each startup waits while WebView2 is tried and fails. Check **Plugins** > **MarkdownTrellis** > **Use IE Engine** to use the fallback preview without trying WebView2 (applies after restarting Notepad++).
+
 ## Installation
 
 Download `MarkdownTrellis-<version>-x64.zip` from [Releases](https://github.com/ja1bus/MarkdownTrellis/releases/latest).
@@ -107,7 +109,7 @@ Settings are stored in `%LOCALAPPDATA%\MarkdownTrellis\settings.json`. Errors ar
 
 | Setting | Description |
 |---|---|
-| `PreviewEngine` | `auto` (default) or `ie` (always use the fallback preview) |
+| `PreviewEngine` | `auto` (default) or `ie` (always use the fallback preview). You can also switch it with **Use IE Engine** on the menu |
 | `ExtraHtmlTags` | Additional HTML tags to allow in the preview. Tags forbidden for safety cannot be allowed |
 
 ## Building

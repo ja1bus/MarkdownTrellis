@@ -188,6 +188,7 @@ internal static unsafe class PluginHost
             new("copyRich", CopyRich),
             Separator(),
             new("unwrap", UnwrapFence),
+            new("ieEngine", ToggleIeEngine),
             new("about", ShowAbout),
         ];
     }
@@ -208,6 +209,7 @@ internal static unsafe class PluginHost
                 break;
             case Native.NppnReady:
                 _ready = true;
+                UpdateMenuCheck();
                 if (_settings.PanelVisible)
                 {
                     ShowPanel();
@@ -314,7 +316,20 @@ internal static unsafe class PluginHost
         if (Items != null)
         {
             Native.SendMessage(Npp.Npp, Native.NppmSetMenuItemCheck, Items[0].CmdId, _panelVisible ? 1 : 0);
+            var engine = Commands.ToList().FindIndex(c => c.Key == "ieEngine");
+            Native.SendMessage(Npp.Npp, Native.NppmSetMenuItemCheck, Items[engine].CmdId, UseIeEngine ? 1 : 0);
         }
+    }
+
+    private static bool UseIeEngine => _settings.PreviewEngine == "ie";
+
+    /// <summary>WebView2を試さずにIEエンジンを使うかを切り替える。表示の作り直しは再起動時に行う。</summary>
+    private static void ToggleIeEngine()
+    {
+        _settings.PreviewEngine = UseIeEngine ? "auto" : "ie";
+        SaveSettings();
+        UpdateMenuCheck();
+        Native.MessageBox(Npp.Npp, Text(UseIeEngine ? "ieEngineOn" : "ieEngineOff"), "MarkdownTrellis", Native.MbIconInformation);
     }
 
     private static nint Pin(string text)
@@ -347,7 +362,7 @@ internal static unsafe class PluginHost
         Native.SendMessage(Npp.Npp, Native.NppmDmmRegAsDckDlg, 0, (nint)data);
         Native.SendMessage(Npp.Npp, Native.NppmDmmShow, 0, _panel);
 
-        if (_settings.PreviewEngine == "ie")
+        if (UseIeEngine)
         {
             StartLegacyPreview();
             return;
@@ -385,7 +400,7 @@ internal static unsafe class PluginHost
             {
                 _legacyToolbar = new LegacyToolbar(_panel);
                 _legacyToolbar.Create(instance, Commands, Text);
-                _legacyToolbar.SetStatus(Text("legacyNotice"));
+                _legacyToolbar.SetStatus(Text(UseIeEngine ? "legacyNoticeChosen" : "legacyNotice"));
                 _legacy = preview;
                 LayoutLegacy();
                 Native.SetTimer(_panel, LegacyTimer, LegacyPollMs, 0);

@@ -40,6 +40,8 @@ WebView2 を起動できない場合は、IE エンジンによる代替表示�
 - 全体を囲むコードフェンスなどの通知、構文の統一（正規化）、言語の切替はパネルから使えません。外側のコードフェンスの解除はメニューから使えます。
 - IE エンジンは WebView2 より保護が弱く、将来 Windows から廃止される可能性があります。
 
+代替表示に切り替わる PC では、起動のたびに WebView2 を試して失敗するまで待ちが発生します。［プラグイン］→［MarkdownTrellis］→［IEエンジンで表示する］にチェックを付けると、WebView2 を試さずに代替表示を使います（Notepad++ の再起動後に反映）。
+
 ## インストール
 
 配布物は [Releases](https://github.com/ja1bus/MarkdownTrellis/releases/latest) の `MarkdownTrellis-<版>-x64.zip` です。
@@ -107,7 +109,7 @@ Notepad++ を閉じて、`plugins\MarkdownTrellis` フォルダを削除しま�
 
 | 項目 | 内容 |
 |---|---|
-| `PreviewEngine` | `auto`（既定）または `ie`（最初から代替表示を使う） |
+| `PreviewEngine` | `auto`（既定）または `ie`（最初から代替表示を使う）。メニューの［IEエンジンで表示する］でも切り替えられます |
 | `ExtraHtmlTags` | プレビューで追加で許可する HTML タグ。安全のために禁止しているタグは許可できません |
 
 ## ビルド方法

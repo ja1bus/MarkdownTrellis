@@ -88,7 +88,11 @@ public static class Strings
         ["warnReadOnly"] = ("The document is read-only.", "文書は読み取り専用です。"),
         ["gfmOnly"] = ("Available in GFM mode", "GFMモードで利用できます"),
         ["webViewMissing"] = ("Could not start the preview. See error.log in %LOCALAPPDATA%\\MarkdownTrellis for details. Editing commands and copying are still available from the Plugins menu.", "プレビューを起動できませんでした。詳細は %LOCALAPPDATA%\\MarkdownTrellis の error.log を見てください。書式設定とコピーは［プラグイン］メニューから利用できます。"),
-        ["legacyNotice"] = ("Simple preview: WebView2 could not start. Links and images are shown as text.", "簡易表示: WebView2を起動できないため、IEエンジンで表示しています。リンクと画像は文字で表示します。"),
+        ["legacyNotice"] = ("Simple preview: WebView2 could not start. Links and images are shown as text. To skip the wait at startup, check Plugins > MarkdownTrellis > Use IE Engine.", "簡易表示: WebView2を起動できないため、IEエンジンで表示しています。リンクと画像は文字で表示します。起動時の待ちを省くには、［プラグイン］→［MarkdownTrellis］→［IEエンジンで表示する］にチェックを付けてください。"),
+        ["legacyNoticeChosen"] = ("Simple preview: shown with the IE engine as set in Plugins > MarkdownTrellis > Use IE Engine. Links and images are shown as text.", "簡易表示: ［IEエンジンで表示する］の設定により、IEエンジンで表示しています。リンクと画像は文字で表示します。"),
+        ["ieEngine"] = ("Use IE Engine", "IEエンジンで表示する"),
+        ["ieEngineOn"] = ("The preview will use the IE engine without trying WebView2. Restart Notepad++ to apply.", "WebView2を試さず、IEエンジンで表示するようにしました。Notepad++の再起動後に反映されます。"),
+        ["ieEngineOff"] = ("The preview will try WebView2 first and use the IE engine only if WebView2 cannot start. Restart Notepad++ to apply.", "WebView2を先に試し、起動できないときだけIEエンジンで表示するようにしました。Notepad++の再起動後に反映されます。"),
         ["more"] = ("More", "その他"),
     };
 
