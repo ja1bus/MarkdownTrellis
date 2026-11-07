@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>MarkdownTrellis</RootNamespace>
+    <AssemblyName>MarkdownTrellis</AssemblyName>
+    <Version>0.9.0</Version>
+    <FileVersion>0.9.0.0</FileVersion>
+    <Product>MarkdownTrellis</Product>
+    <Copyright>© ja1bus</Copyright>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+
+    <!-- Notepad++が読み込むネイティブDLLとして発行する（dotnet publishのみ） -->
+    <PublishAot>true</PublishAot>
+    <NativeLib>Shared</NativeLib>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <EventSourceSupport>false</EventSourceSupport>
+    <StackTraceSupport>true</StackTraceSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Plugin\**\*.cs" />
+    <EmbeddedResource Include="Assets\shell.html" LogicalName="shell.html" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Core\MarkdownTrellis.Core.csproj" />
+    <!-- 使うのは静的ローダーのみ。マネージドのラッパーはNativeAOTで動かないため参照しない -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" ExcludeAssets="all" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 配布するDLLにビルドしたPCのパスを残さない -->
+    <LinkerArg Include="/PDBALTPATH:MarkdownTrellis.pdb" />
+    <DirectPInvoke Include="WebView2Loader" />
+    <NativeLibrary Include="$(PkgMicrosoft_Web_WebView2)\build\native\x64\WebView2LoaderStatic.lib" />
+  </ItemGroup>
+
+</Project>

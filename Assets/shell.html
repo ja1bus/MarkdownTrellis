@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https://doc.markdowntrellis.example">
+<title>MarkdownTrellis</title>
+<style>
+  :root { --bg:#f6f6f6; --fg:#222; --line:#ccc; --btn:#fff; --hover:#e6e6e6; --accent:#0b63c5; --notice:#fff8e1; }
+  :root.dark { --bg:#2b2b2b; --fg:#ddd; --line:#555; --btn:#3a3a3a; --hover:#4a4a4a; --accent:#6db1ff; --notice:#463f24; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:12px "Segoe UI","Yu Gothic UI",sans-serif; overflow:hidden; }
+  #bar { display:flex; flex-wrap:wrap; gap:2px 6px; padding:4px; border-bottom:1px solid var(--line); }
+  .group { display:flex; flex-wrap:wrap; gap:2px; align-items:center; min-width:0; }
+  button, select, input { font:inherit; color:var(--fg); background:var(--btn); border:1px solid var(--line); border-radius:3px; }
+  button { min-width:24px; height:24px; padding:0 5px; cursor:pointer; white-space:nowrap; }
+  button:hover:not(:disabled) { background:var(--hover); }
+  button:disabled { opacity:.4; cursor:default; }
+  select { height:24px; max-width:110px; min-width:0; flex:0 1 auto; }
+  input { padding:2px 4px; width:100%; }
+  #notices { display:flex; flex-direction:column; }
+  .notice { display:flex; flex-wrap:wrap; gap:4px; align-items:center; padding:3px 6px; background:var(--notice); border-bottom:1px solid var(--line); }
+  .notice span { flex:1 1 140px; }
+  #frame { flex:1; width:100%; border:0; background:var(--bg); min-height:0; }
+  #toast { position:fixed; left:8px; right:8px; bottom:8px; padding:6px 8px; background:var(--accent); color:#fff; border-radius:3px; display:none; }
+  #overlay { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:flex-start; justify-content:center; padding:24px 8px; }
+  #dialog { width:100%; max-width:420px; max-height:100%; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:10px; }
+  #dialog label { display:block; margin:6px 0 2px; }
+  #dialog h3 { margin:0 0 6px; font-size:13px; }
+  #dialog .actions { display:flex; justify-content:flex-end; gap:4px; margin-top:10px; }
+  #dialog .check { display:flex; gap:6px; align-items:center; margin:4px 0; }
+  #dialog .check input { width:auto; }
+  .change { border-top:1px solid var(--line); padding:4px 0; font-family:Consolas,monospace; white-space:pre-wrap; word-break:break-all; }
+  .before { color:#c0392b; } .after { color:#1e8449; }
+  :root.dark .before { color:#ff8a80; } :root.dark .after { color:#8bdb9b; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <div class="group">
+    <button data-run="bold" data-title="bold"><b>B</b></button>
+    <button data-run="italic" data-title="italic"><i>I</i></button>
+    <button data-run="strike" data-title="strike" data-gfm><s>S</s></button>
+    <button data-run="code" data-title="code">&lt;/&gt;</button>
+    <select id="heading" data-title="heading"></select>
+  </div>
+  <div class="group">
+    <button data-run="ul" data-title="ul">•</button>
+    <button data-run="ol" data-title="ol">1.</button>
+    <button data-run="task" data-title="task" data-gfm>☑</button>
+    <button data-run="quote" data-title="quote">❝</button>
+  </div>
+  <div class="group">
+    <button data-dialog="codeblock" data-title="codeblockHelp">{ }</button>
+    <button data-dialog="table" data-title="table" data-gfm>▦</button>
+    <button data-dialog="link" data-title="link">🔗</button>
+    <button data-dialog="image" data-title="image">🖼</button>
+    <button data-run="hr" data-title="hr">―</button>
+  </div>
+  <div class="group">
+    <button id="copyMarkdown" data-run="copyMarkdown" data-label="copyMarkdown" data-title="copyMarkdownHelp"></button>
+    <button id="copyRich" data-run="copyRich" data-label="copyRich" data-title="copyRichHelp"></button>
+  </div>
+  <div class="group">
+    <select id="mode" data-title="mode"><option value="Gfm">GFM</option><option value="CommonMark">CommonMark</option></select>
+    <button id="features" data-label="features"></button>
+    <select id="language" data-title="language"></select>
+  </div>
+</div>
+<div id="notices"></div>
+<iframe id="frame" sandbox="allow-same-origin allow-popups" title="preview"></iframe>
+<div id="toast" role="status"></div>
+<div id="overlay"><div id="dialog" role="dialog"></div></div>
+<script>
+'use strict';
+const FEATURES = ['Alerts','Footnotes','Math','Containers','Highlight','WikiLinks','DefinitionLists'];
+const GITHUB_FEATURES = ['Alerts','Footnotes'];
+const IMAGE_ORIGIN ='https://doc.markdowntrellis.example';
+const FRAME_CSP = "default-src 'none'; img-src " + IMAGE_ORIGIN + "; style-src 'unsafe-inline'";
+const DOC_CSS = `
+  :root { color-scheme: light; --fg:#222; --bg:#fff; --muted:#666; --line:#ccc; --code:#f3f3f3; --link:#0b63c5; }
+  :root.dark { color-scheme: dark; --fg:#ddd; --bg:#1f1f1f; --muted:#aaa; --line:#555; --code:#2d2d2d; --link:#6db1ff; }
+  body { margin:0; padding:10px 14px; background:var(--bg); color:var(--fg); font:14px/1.6 "Segoe UI","Yu Gothic UI",Meiryo,sans-serif; word-wrap:break-word; }
+  a { color:var(--link); }
+  h1,h2 { border-bottom:1px solid var(--line); padding-bottom:.2em; }
+  h1,h2,h3,h4,h5,h6 { margin:1em 0 .5em; line-height:1.3; }
+  pre { background:var(--code); padding:8px 10px; overflow:auto; border-radius:3px; }
+  code { background:var(--code); padding:.1em .3em; border-radius:3px; font-family:Consolas,"Courier New",monospace; }
+  pre code { padding:0; background:none; }
+  blockquote { margin:0 0 1em; padding:0 0 0 12px; border-left:4px solid var(--line); color:var(--muted); }
+  table { border-collapse:collapse; margin:0 0 1em; }
+  th,td { border:1px solid var(--line); padding:4px 8px; }
+  th { background:var(--code); }
+  img { max-width:100%; }
+  hr { border:0; border-top:1px solid var(--line); margin:1em 0; }
+  ul.contains-task-list { list-style:none; padding-left:1.2em; }
+  .blocked-image { border:1px dashed var(--line); padding:0 4px; color:var(--muted); }
+  .markdown-alert { border-left:4px solid var(--link); padding:2px 0 2px 12px; margin:0 0 1em; }
+  .markdown-alert-title { font-weight:bold; }
+  .custom-container, details { border:1px solid var(--line); border-radius:3px; padding:4px 10px; margin:0 0 1em; }
+  summary { cursor:pointer; font-weight:bold; }
+  .trellis-empty { color:var(--muted); }
+  .math { font-family:Consolas,monospace; }
+`;
+
+let strings = {};
+let dark = false;
+let modeValue = 'Gfm';
+let activeFeatures = [];
+let frameReady = false;
+let pending = null;
+let toastTimer = 0;
+
+const $ = id => document.getElementById(id);
+const t = key => strings[key] ?? key;
+const post = (cmd, extra) => chrome.webview.postMessage(JSON.stringify({ cmd, ...extra }));
+const frameDoc = () => $('frame').contentDocument;
+
+function setupFrame() {
+  const frame = $('frame');
+  frame.addEventListener('load', () => {
+    frameReady = true;
+    applyTheme();
+    frameDoc().addEventListener('click', onFrameClick, true);
+    if (pending !== null) { setHtml(pending); pending = null; }
+    post('ready');
+  });
+  frame.srcdoc = '<!DOCTYPE html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="' + FRAME_CSP + '"><base target="_blank"><style>' + DOC_CSS + '</style></head><body></body></html>';
+}
+
+function onFrameClick(event) {
+  const link = event.target.closest ? event.target.closest('a[href]') : null;
+  if (!link) return;
+  event.preventDefault();
+  const href = link.getAttribute('href');
+  if (href.startsWith('#')) {
+    const target = frameDoc().getElementById(decodeURIComponent(href.slice(1)));
+    if (target) target.scrollIntoView();
+  } else {
+    post('openLink', { url: href });
+  }
+}
+
+function setHtml(html) {
+  if (!frameReady) { pending = html; return; }
+  const doc = frameDoc();
+  const scroller = doc.scrollingElement;
+  const top = scroller ? scroller.scrollTop : 0;
+  // 開閉の状態を更新で失わないようにする
+  const open = [...doc.querySelectorAll('details')].map(d => d.open);
+  doc.body.innerHTML = html;
+  [...doc.querySelectorAll('details')].forEach((d, i) => { if (i < open.length) d.open = open[i]; });
+  if (scroller) scroller.scrollTop = top;
+}
+
+function applyTheme() {
+  document.documentElement.classList.toggle('dark', dark);
+  if (frameReady) frameDoc().documentElement.classList.toggle('dark', dark);
+}
+
+function showToast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+function applyStrings(language) {
+  document.querySelectorAll('[data-title]').forEach(el => { el.title = t(el.dataset.title); });
+  document.querySelectorAll('[data-label]').forEach(el => { el.textContent = t(el.dataset.label); });
+  const heading = $('heading');
+  heading.innerHTML = '';
+  const headingOption = (value, label) => { const o = document.createElement('option'); o.value = value; o.textContent = label; heading.append(o); };
+  headingOption('', t('heading'));
+  for (let i = 1; i <= 6; i++) headingOption(String(i), t('h' + i));
+  headingOption('0', t('headingNone'));
+  const lang = $('language');
+  lang.innerHTML = '';
+  for (const [value, label] of [['system', t('languageSystem')], ['en', 'English'], ['ja', '日本語']]) {
+    const o = document.createElement('option'); o.value = value; o.textContent = label; lang.append(o);
+  }
+  lang.value = language;
+  document.documentElement.lang = strings.bold === '太字' ? 'ja' : 'en';
+}
+
+function applyMode() {
+  $('mode').value = modeValue;
+  document.querySelectorAll('[data-gfm]').forEach(el => {
+    el.disabled = modeValue !== 'Gfm';
+    el.title = modeValue === 'Gfm' ? t(el.dataset.title) : t(el.dataset.title) + ' (' + t('gfmOnly') + ')';
+  });
+}
+
+function button(label, onClick) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function renderNotices(notices) {
+  const box = $('notices');
+  box.innerHTML = '';
+  for (const notice of notices) {
+    const row = document.createElement('div');
+    row.className = 'notice';
+    const span = document.createElement('span');
+    span.textContent = notice.text;
+    row.append(span);
+    if (notice.kind === 'fence') {
+      row.append(button(t(notice.stripped ? 'previewFull' : 'previewInner'), () => post('stripFence', { on: !notice.stripped })));
+      row.append(button(t('unwrap'), () => post('run', { name: 'unwrap' })));
+    } else if (notice.kind === 'syntax') {
+      row.append(button(t('enable'), () => post('setFeature', { feature: notice.feature, on: true })));
+      if (notice.canConvert) row.append(button(t('normalize'), () => post('normalizePreview', { feature: notice.feature })));
+    } else if (notice.action) {
+      row.append(button(notice.action, () => post(notice.command)));
+    }
+
+    box.append(row);
+  }
+}
+
+function closeDialog() {
+  $('overlay').style.display = 'none';
+  $('dialog').innerHTML = '';
+  post('focusEditor');
+}
+
+function openDialog(title, fields, onSubmit, submitLabel) {
+  const dialog = $('dialog');
+  dialog.innerHTML = '';
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  dialog.append(heading);
+  const inputs = {};
+  for (const field of fields) {
+    const label = document.createElement('label');
+    label.textContent = field.label;
+    const input = document.createElement('input');
+    input.type = field.type || 'text';
+    if (field.type === 'number') { input.min = field.min; input.max = field.max; }
+    input.value = field.value ?? '';
+    label.append(input);
+    dialog.append(label);
+    inputs[field.name] = input;
+  }
+
+  const submit = () => {
+    const values = {};
+    for (const key in inputs) values[key] = inputs[key].type === 'number' ? Number(inputs[key].value) : inputs[key].value;
+    $('overlay').style.display = 'none';
+    $('dialog').innerHTML = '';
+    onSubmit(values);
+  };
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.append(button(submitLabel || t('insert'), submit), button(t('cancel'), closeDialog));
+  dialog.append(actions);
+  dialog.onkeydown = e => {
+    if (e.key === 'Escape') closeDialog();
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  };
+  $('overlay').style.display = 'flex';
+  const first = dialog.querySelector('input');
+  if (first) { first.focus(); first.select(); }
+}
+
+function showInsertDialog(kind, selected) {
+  if (kind === 'table') {
+    openDialog(t('table').replace(/\.+$/, ''), [
+      { name: 'cols', label: t('cols'), type: 'number', min: 1, max: 50, value: 3 },
+      { name: 'rows', label: t('rows'), type: 'number', min: 0, max: 500, value: 2 },
+    ], v => post('table', v));
+  } else if (kind === 'link') {
+    openDialog(t('link').replace(/\.+$/, ''), [
+      { name: 'text', label: t('linkText'), value: selected },
+      { name: 'url', label: t('linkUrl'), value: 'https://' },
+    ], v => post('link', v));
+  } else if (kind === 'image') {
+    openDialog(t('image').replace(/\.+$/, ''), [
+      { name: 'text', label: t('imageAlt'), value: selected },
+      { name: 'url', label: t('imagePath') },
+    ], v => post('image', v));
+  } else if (kind === 'codeblock') {
+    openDialog(t('codeblock'), [{ name: 'lang', label: t('codeLanguage') }], v => post('codeblock', v));
+  }
+}
+
+function showFeatures() {
+  const dialog = $('dialog');
+  dialog.innerHTML = '';
+  const heading = document.createElement('h3');
+  heading.textContent = t('features');
+  dialog.append(heading);
+  const help = document.createElement('p');
+  help.textContent = t('featuresHelp');
+  dialog.append(help);
+  for (const feature of FEATURES) {
+    const label = document.createElement('label');
+    label.className = 'check';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = activeFeatures.includes(feature);
+    box.dataset.feature = feature;
+    label.append(box, document.createTextNode(t('feature' + feature)));
+    dialog.append(label);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  const boxes = () => [...dialog.querySelectorAll('input[type=checkbox]')];
+  actions.append(
+    button('OK', () => {
+      post('setFeatures', { features: boxes().filter(box => box.checked).map(box => box.dataset.feature) });
+      closeDialog();
+    }),
+    button(t('presetGitHub'), () => {
+      boxes().forEach(box => { if (GITHUB_FEATURES.includes(box.dataset.feature)) box.checked = true; });
+    }),
+    button(t('clearAll'), () => { boxes().forEach(box => { box.checked = false; }); }));
+  actions.style.flexWrap = 'wrap';
+  dialog.append(actions);
+  dialog.onkeydown = e => { if (e.key === 'Escape') closeDialog(); };
+  $('overlay').style.display = 'flex';
+}
+
+function showNormalize(message) {
+  if (message.changes.length === 0) { showToast(t('normalizeNone')); return; }
+  const dialog = $('dialog');
+  dialog.innerHTML = '';
+  const heading = document.createElement('h3');
+  heading.textContent = t('normalizeTitle');
+  dialog.append(heading);
+  if (message.warn) {
+    const warn = document.createElement('p');
+    warn.textContent = t('normalizeWarning');
+    dialog.append(warn);
+  }
+
+  for (const change of message.changes) {
+    const row = document.createElement('div');
+    row.className = 'change';
+    const before = document.createElement('div');
+    before.className = 'before';
+    before.textContent = change.line + ': ' + change.before;
+    const after = document.createElement('div');
+    after.className = 'after';
+    after.textContent = change.line + ': ' + change.after;
+    row.append(before, after);
+    dialog.append(row);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.append(button(t('apply'), () => {
+    $('overlay').style.display = 'none';
+    $('dialog').innerHTML = '';
+    post('normalizeApply', { feature: message.feature });
+  }), button(t('cancel'), closeDialog));
+  dialog.append(actions);
+  dialog.onkeydown = e => { if (e.key === 'Escape') closeDialog(); };
+  $('overlay').style.display = 'flex';
+}
+
+function scrollToLine(line) {
+  if (!frameReady) return;
+  const doc = frameDoc();
+  const blocks = doc.querySelectorAll('[data-line]');
+  let best = null;
+  for (const block of blocks) {
+    if (Number(block.dataset.line) > line) break;
+    best = block;
+  }
+
+  if (!best) return;
+  const rect = best.getBoundingClientRect();
+  const height = doc.documentElement.clientHeight;
+  if (rect.top < 0 || rect.top > height - 20) best.scrollIntoView({ block: 'center' });
+}
+
+chrome.webview.addEventListener('message', event => {
+  const message = event.data;
+  switch (message.type) {
+    case 'init':
+      strings = message.strings;
+      document.title = 'MarkdownTrellis ' + message.version;
+      applyStrings(message.language);
+      applyMode();
+      break;
+    case 'theme':
+      dark = message.dark;
+      applyTheme();
+      break;
+    case 'render':
+      modeValue = message.mode;
+      activeFeatures = message.features;
+      applyMode();
+      renderNotices(message.notices);
+      setHtml(message.isEmpty ? '<p class="trellis-empty">' + t('empty').replace(/[<>&]/g, '') + '</p>' : message.html);
+      break;
+    case 'status':
+      renderNotices([{ kind: 'status', text: message.text, action: message.action, command: message.command }]);
+      setHtml('');
+      break;
+    case 'caret':
+      scrollToLine(message.line);
+      break;
+    case 'toast':
+      showToast(message.text);
+      break;
+    case 'dialog':
+      showInsertDialog(message.kind, message.text);
+      break;
+    case 'normalizePreview':
+      showNormalize(message);
+      break;
+    case 'closeDialog':
+      $('overlay').style.display = 'none';
+      $('dialog').innerHTML = '';
+      break;
+  }
+});
+
+document.querySelectorAll('[data-run]').forEach(el => el.addEventListener('click', () => post('run', { name: el.dataset.run })));
+document.querySelectorAll('[data-dialog]').forEach(el => el.addEventListener('click', () => post('dialog', { kind: el.dataset.dialog })));
+$('heading').addEventListener('change', e => {
+  if (e.target.value !== '') post('heading', { level: Number(e.target.value) });
+  e.target.value = '';
+});
+$('mode').addEventListener('change', e => post('setMode', { mode: e.target.value }));
+$('language').addEventListener('change', e => post('language', { language: e.target.value }));
+$('features').addEventListener('click', showFeatures);
+setupFrame();
+</script>
+</body>
+</html>

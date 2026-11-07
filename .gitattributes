@@ -1,0 +1,2 @@
+# Normalize text files to LF in the repository; Git converts them on checkout as configured.
+* text=auto
