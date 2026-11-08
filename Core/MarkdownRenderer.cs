@@ -7,8 +7,6 @@ using Markdig.Syntax;
 
 namespace MarkdownTrellis.Core;
 
-public enum BaseMode { Gfm, CommonMark }
-
 [Flags]
 public enum SyntaxFeature
 {
@@ -24,7 +22,6 @@ public enum SyntaxFeature
 
 public sealed record RenderRequest(
     string Text,
-    BaseMode Mode = BaseMode.Gfm,
     SyntaxFeature Features = SyntaxFeature.None,
     bool StripOuterFence = false,
     IReadOnlyCollection<string>? ExtraTags = null,
@@ -36,10 +33,11 @@ public sealed record RichCopyResult(string Html, string PlainText, int LocalImag
 
 public static class MarkdownRenderer
 {
-    private static readonly ConcurrentDictionary<(BaseMode, SyntaxFeature), MarkdownPipeline> Pipelines = new();
+    private static readonly ConcurrentDictionary<SyntaxFeature, MarkdownPipeline> Pipelines = new();
 
-    public static MarkdownPipeline GetPipeline(BaseMode mode, SyntaxFeature features) =>
-        Pipelines.GetOrAdd((mode, features), static key => Build(key.Item1, key.Item2));
+    /// <summary>GFM（CommonMarkと表、チェックリスト、取り消し線、自動リンク）に、指定の追加構文を加えた解析器。</summary>
+    public static MarkdownPipeline GetPipeline(SyntaxFeature features) =>
+        Pipelines.GetOrAdd(features, static key => Build(key));
 
     /// <summary>プレビュー用のHTMLを生成する。原文は変更しない。</summary>
     public static RenderResult RenderPreview(RenderRequest request)
@@ -78,7 +76,7 @@ public static class MarkdownRenderer
             }
         }
 
-        var pipeline = GetPipeline(request.Mode, request.Features);
+        var pipeline = GetPipeline(request.Features);
         var document = Markdown.Parse(text, pipeline);
         if (addLineNumbers)
         {
@@ -94,29 +92,22 @@ public static class MarkdownRenderer
         return (document.ToHtml(pipeline), lineOffset);
     }
 
-    private static MarkdownPipeline Build(BaseMode mode, SyntaxFeature features)
+    private static MarkdownPipeline Build(SyntaxFeature features)
     {
         var builder = new MarkdownPipelineBuilder();
         builder.UseYamlFrontMatter();
+        builder.UsePipeTables(new PipeTableOptions { UseGfmRules = true });
+        builder.UseTaskLists();
+        builder.UseAutoLinks();
 
-        var emphasis = (EmphasisExtraOptions)0;
-        if (mode == BaseMode.Gfm)
-        {
-            builder.UsePipeTables(new PipeTableOptions { UseGfmRules = true });
-            builder.UseTaskLists();
-            builder.UseAutoLinks();
-            emphasis |= EmphasisExtraOptions.Strikethrough;
-        }
+        var emphasis = EmphasisExtraOptions.Strikethrough;
 
         if (features.HasFlag(SyntaxFeature.Highlight))
         {
             emphasis |= EmphasisExtraOptions.Marked;
         }
 
-        if (emphasis != 0)
-        {
-            builder.UseEmphasisExtras(emphasis);
-        }
+        builder.UseEmphasisExtras(emphasis);
 
         if (features.HasFlag(SyntaxFeature.Alerts))
         {

@@ -376,3 +376,54 @@ public static partial class LineSplitter
     [GeneratedRegex(@"^ {0,3}(`{3,}|~{3,})(.*)$")]
     private static partial Regex FenceRegex();
 }
+
+/// <summary>選択範囲だけを書式付きコピーするときの確認。</summary>
+public static partial class FragmentCheck
+{
+    /// <summary>
+    /// 断片が、断片の外（文書の他の場所）にだけある参照リンクや脚注の定義を使っているかを調べる。
+    /// 通知のための目安で、コードブロック内の記述なども数える。
+    /// </summary>
+    public static bool UsesOutsideDefinitions(string document, string fragment, SyntaxFeature features)
+    {
+        var inside = Labels(fragment);
+        var normalized = Normalize(fragment);
+        foreach (var (label, isFootnote) in Labels(document))
+        {
+            if (inside.Contains((label, isFootnote)) || (isFootnote && !features.HasFlag(SyntaxFeature.Footnotes)))
+            {
+                continue;
+            }
+
+            var usage = isFootnote ? "[^" + label + "]" : "[" + label + "]";
+            if (normalized.Contains(usage, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static HashSet<(string Label, bool IsFootnote)> Labels(string text)
+    {
+        var result = new HashSet<(string, bool)>();
+        foreach (Match match in DefinitionPattern().Matches(text))
+        {
+            var label = match.Groups["label"].Value;
+            var isFootnote = label.StartsWith('^');
+            result.Add((Normalize(isFootnote ? label[1..] : label), isFootnote));
+        }
+
+        return result;
+    }
+
+    // ラベルは大文字小文字と連続する空白を区別しない
+    private static string Normalize(string text) => WhitespacePattern().Replace(text, " ").ToLowerInvariant();
+
+    [GeneratedRegex(@"^ {0,3}\[(?<label>[^\]\r\n]+)\]:", RegexOptions.Multiline)]
+    private static partial Regex DefinitionPattern();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex WhitespacePattern();
+}

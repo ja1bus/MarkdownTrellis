@@ -13,7 +13,6 @@ internal sealed record PluginCommand(string? Key, Action? Run);
 
 internal sealed class DocumentState
 {
-    public BaseMode Mode;
     public SyntaxFeature Features;
     public bool StripOuterFence;
     public bool ForcePreview;
@@ -57,6 +56,10 @@ internal static unsafe class PluginHost
     private static AppSettings _settings = new();
     private static string _language = "en";
     private static string _dataFolder = string.Empty;
+    private static char* _title;
+    private static bool _fallbackNoticeShown;
+
+    private const int TitleLength = 128;
 
     public static NppData Npp;
     public static FuncItem* Items;
@@ -149,37 +152,21 @@ internal static unsafe class PluginHost
         PluginCommand Line(string key, LineStyle style) => new(key, () => Format((t, s, e) => TextFormatter.ToggleLineStyle(t, s, e, style), lineLevel: true));
         PluginCommand Heading(int level) => new("h" + level, () => Format((t, s, e) => TextFormatter.SetHeading(t, s, e, level), lineLevel: true));
 
-        // GFM固有の書式はCommonMarkの文書では解釈されないので、どの経路からも実行しない
-        PluginCommand GfmOnly(PluginCommand command) => command with
-        {
-            Run = () =>
-            {
-                if (StateOf(CurrentBuffer).Mode == BaseMode.Gfm)
-                {
-                    command.Run!();
-                }
-                else
-                {
-                    PostToast(Text(command.Key!) + ": " + Text("gfmOnly"));
-                }
-            },
-        };
-
         return
         [
             new("menu.panel", TogglePanel),
             Separator(),
             Inline("bold", InlineStyle.Bold),
             Inline("italic", InlineStyle.Italic),
-            GfmOnly(Inline("strike", InlineStyle.Strikethrough)),
+            Inline("strike", InlineStyle.Strikethrough),
             Inline("code", InlineStyle.Code),
             Heading(1), Heading(2), Heading(3), Heading(4), Heading(5), Heading(6),
             Line("ul", LineStyle.BulletList),
             Line("ol", LineStyle.NumberedList),
-            GfmOnly(Line("task", LineStyle.TaskList)),
+            Line("task", LineStyle.TaskList),
             Line("quote", LineStyle.Quote),
             new("codeblock", () => OpenDialog("codeblock")),
-            GfmOnly(new("table", () => OpenDialog("table"))),
+            new("table", () => OpenDialog("table")),
             new("link", () => OpenDialog("link")),
             new("image", () => OpenDialog("image")),
             new("hr", () => Format((t, s, e) => TextFormatter.InsertHorizontalRule(t, s, e, Editor.Eol))),
@@ -190,6 +177,11 @@ internal static unsafe class PluginHost
             new("unwrap", UnwrapFence),
             new("ieEngine", ToggleIeEngine),
             new("about", ShowAbout),
+
+            // Shortcut Mapperの割り当ては項目の順番で保存されるので、追加の項目は末尾に置く
+            Separator(),
+            new("copyRichSelection", CopyRichSelection),
+            new("settings", () => OpenDialog("settings")),
         ];
     }
 
@@ -355,7 +347,10 @@ internal static unsafe class PluginHost
 
         var data = (TbData*)NativeMemory.AllocZeroed((nuint)sizeof(TbData));
         data->Client = _panel;
-        data->Name = Pin("MarkdownTrellis " + Version);
+        // タイトルは表示方式と言語で変わるので、書き換えられる領域を渡す
+        _title = (char*)NativeMemory.AllocZeroed(TitleLength, sizeof(char));
+        WriteTitle();
+        data->Name = (nint)_title;
         data->DlgId = 0;
         data->Mask = Native.DwsDfContRight | Native.DwsUseOwnDarkMode;
         data->ModuleName = Pin("MarkdownTrellis.dll");
@@ -382,6 +377,24 @@ internal static unsafe class PluginHost
         }
     }
 
+    private static void WriteTitle()
+    {
+        var title = "MarkdownTrellis " + Version + (_legacy is not null ? Text("titleSimple") : string.Empty);
+        var length = Math.Min(title.Length, TitleLength - 1);
+        title.AsSpan(0, length).CopyTo(new Span<char>(_title, TitleLength));
+        _title[length] = '\0';
+    }
+
+    /// <summary>実際に使っている表示方式と表示言語を、パネルのタイトルに反映する。</summary>
+    private static void UpdatePanelTitle()
+    {
+        if (_title != null && _panel != 0)
+        {
+            WriteTitle();
+            Native.SendMessage(Npp.Npp, Native.NppmDmmUpdateDispInfo, 0, _panel);
+        }
+    }
+
     private static string ReadShell()
     {
         using var stream = typeof(PluginHost).Assembly.GetManifestResourceStream("shell.html")!;
@@ -400,8 +413,16 @@ internal static unsafe class PluginHost
             {
                 _legacyToolbar = new LegacyToolbar(_panel);
                 _legacyToolbar.Create(instance, Commands, Text);
-                _legacyToolbar.SetStatus(Text(UseIeEngine ? "legacyNoticeChosen" : "legacyNotice"));
                 _legacy = preview;
+
+                // 自動で切り替わったときだけ、起動中に一度短く知らせる。IEを選んだ利用者には出さない
+                if (!UseIeEngine && !_fallbackNoticeShown)
+                {
+                    _fallbackNoticeShown = true;
+                    _legacyToolbar.SetStatus(Text("legacyFallback"));
+                }
+
+                UpdatePanelTitle();
                 LayoutLegacy();
                 Native.SetTimer(_panel, LegacyTimer, LegacyPollMs, 0);
                 ScheduleRender(1);
@@ -419,21 +440,21 @@ internal static unsafe class PluginHost
         Native.PostMessage(_panel, Native.WmPaint, 0, 0);
     }
 
-    private static void OnLegacyModeChanged()
-    {
-        var mode = _legacyToolbar!.IsCommonMarkSelected ? BaseMode.CommonMark : BaseMode.Gfm;
-        StateOf(CurrentBuffer).Mode = mode;
-        _settings.DefaultMode = mode;
-        SaveSettings();
-        ScheduleRender(1);
-        Editor.Send(Native.SciGrabFocus);
-    }
-
     private static void ShowFeaturesDialog()
     {
         var state = StateOf(CurrentBuffer);
-        var features = Enum.GetValues<SyntaxFeature>().Where(f => f != SyntaxFeature.None).ToList();
-        var fields = features.Select(f => new DialogField(DialogFieldKind.Check, Text(Strings.FeatureKey(f)), isChecked: state.Features.HasFlag(f), tag: f.ToString())).ToList();
+        var fields = new List<DialogField> { new(DialogFieldKind.Label, Text("featuresHelp")) };
+        foreach (var feature in Enum.GetValues<SyntaxFeature>().Where(f => f != SyntaxFeature.None))
+        {
+            var key = Strings.FeatureKey(feature);
+            fields.Add(new(DialogFieldKind.Check, Text(key), isChecked: state.Features.HasFlag(feature), tag: feature.ToString()));
+            fields.Add(new(DialogFieldKind.Label, Text(key + "Help"), indent: 12));
+        }
+
+        // 既定値への保存は、開くたびに未チェックから始める
+        var saveDefault = new DialogField(DialogFieldKind.Check, Text("featuresSaveDefault"));
+        fields.Add(saveDefault);
+        bool IsFeature(DialogField field) => field.Kind == DialogFieldKind.Check && field != saveDefault;
         DialogButton[] extras =
         [
             new(Text("presetGitHub"), all =>
@@ -445,17 +466,93 @@ internal static unsafe class PluginHost
             }),
             new(Text("clearAll"), all =>
             {
-                foreach (var field in all)
+                foreach (var field in all.Where(IsFeature))
                 {
                     field.Checked = false;
                 }
             }),
         ];
 
-        if (NativeDialog.Show(Npp.Npp, Text("features"), fields, "OK", null, extras))
+        if (NativeDialog.Show(Npp.Npp, Text("features"), fields, "OK", Text("cancel"), extras, 260))
         {
-            state.Features = fields.Where(f => f.Checked).Aggregate(SyntaxFeature.None, (sum, f) => sum | Enum.Parse<SyntaxFeature>(f.Tag));
-            ScheduleRender(1);
+            var selected = fields.Where(f => IsFeature(f) && f.Checked).Aggregate(SyntaxFeature.None, (sum, f) => sum | Enum.Parse<SyntaxFeature>(f.Tag));
+            ApplyFeatures(state, selected, saveDefault.Checked);
+        }
+    }
+
+    /// <summary>追加構文を現在のタブに適用する。指定があれば今後の文書の既定値にもする。</summary>
+    private static void ApplyFeatures(DocumentState state, SyntaxFeature features, bool saveDefault)
+    {
+        state.Features = features;
+        if (saveDefault)
+        {
+            _settings.DefaultFeatures = features;
+            SaveSettings();
+        }
+
+        ScheduleRender(1);
+    }
+
+    /// <summary>WebView2を使えないときの設定画面。</summary>
+    private static void ShowNativeSettings()
+    {
+        string[] languageValues = ["system", "ja", "en"];
+        string[] languageLabels = [Text("languageSystem"), "日本語", "English"];
+        var languages = languageValues.Select((value, i) => new DialogField(DialogFieldKind.Radio, languageLabels[i], isChecked: _settings.Language == value, tag: "language")).ToList();
+        var follow = new DialogField(DialogFieldKind.Check, Text("followCaret") + Text("followCaretLegacy"), isChecked: _settings.FollowCaret);
+        var auto = new DialogField(DialogFieldKind.Radio, Text("engineAuto"), isChecked: !UseIeEngine, tag: "engine");
+        var ie = new DialogField(DialogFieldKind.Radio, Text("engineIe"), isChecked: UseIeEngine, tag: "engine");
+        var fields = new List<DialogField>
+        {
+            new(DialogFieldKind.Heading, Text("language")),
+        };
+        fields.AddRange(languages);
+        fields.AddRange(
+        [
+            new(DialogFieldKind.Heading, Text("preview")), follow,
+            new(DialogFieldKind.Heading, Text("engine")), auto, ie, new(DialogFieldKind.Label, Text("engineRestart"), indent: 12),
+            new(DialogFieldKind.Heading, Text("simpleAbout")), new(DialogFieldKind.Label, Text("simpleAboutText").Replace("\n", "\r\n")),
+            new(DialogFieldKind.Heading, string.Format(Text("versionLine"), Version)),
+        ]);
+
+        if (!NativeDialog.Show(Npp.Npp, Text("settingsTitle"), fields, "OK", Text("cancel"), null, 280))
+        {
+            return;
+        }
+
+        var language = languageValues[Math.Max(0, languages.FindIndex(f => f.Checked))];
+        ApplySettings(language, follow.Checked, ie.Checked ? "ie" : "auto");
+    }
+
+    /// <summary>設定画面の［OK］の内容を反映する。</summary>
+    private static void ApplySettings(string language, bool followCaret, string engine)
+    {
+        var resumeFollow = followCaret && !_settings.FollowCaret;
+        _settings.FollowCaret = followCaret;
+
+        var engineChanged = engine is "auto" or "ie" && _settings.PreviewEngine != engine;
+        if (engineChanged)
+        {
+            _settings.PreviewEngine = engine;
+            UpdateMenuCheck();
+        }
+
+        SaveSettings();
+        if (language != _settings.Language)
+        {
+            SetLanguage(language);
+        }
+
+        if (resumeFollow)
+        {
+            // 追従を再開したら、すぐに現在の行へ合わせる
+            _lastCaretLine = -1;
+            PostCaret();
+        }
+
+        if (engineChanged)
+        {
+            PostToast(Text("engineChanged"));
         }
     }
 
@@ -534,21 +631,23 @@ internal static unsafe class PluginHost
                     break;
                 case Native.WmCommand:
                     var controlId = (int)(wParam & 0xFFFF);
-                    if (controlId == LegacyToolbar.ModeComboId)
+                    if (controlId == LegacyToolbar.CloseStatusId)
                     {
-                        const int CbnSelChange = 1;
-                        if (((int)wParam >> 16) == CbnSelChange)
-                        {
-                            OnLegacyModeChanged();
-                        }
-
+                        _legacyToolbar?.SetStatus(string.Empty);
+                        LayoutLegacy();
                         return 0;
                     }
 
-                    if (controlId == LegacyToolbar.FeaturesButtonId)
+                    if (controlId is LegacyToolbar.MoreButtonId or LegacyToolbar.SettingsButtonId && _legacyToolbar is not null)
                     {
-                        ShowFeaturesDialog();
-                        return 0;
+                        var chosen = _legacyToolbar.ShowMenu(controlId, Commands, Text);
+                        if (chosen == LegacyToolbar.FeaturesMenuId)
+                        {
+                            ShowFeaturesDialog();
+                            return 0;
+                        }
+
+                        controlId = chosen;
                     }
 
                     var commandIndex = controlId - LegacyToolbar.FirstCommandId;
@@ -626,7 +725,7 @@ internal static unsafe class PluginHost
     {
         if (!Documents.TryGetValue(buffer, out var state))
         {
-            state = new DocumentState { Mode = _settings.DefaultMode, Features = _settings.DefaultFeatures };
+            state = new DocumentState { Features = _settings.DefaultFeatures };
             Documents[buffer] = state;
         }
 
@@ -679,7 +778,6 @@ internal static unsafe class PluginHost
 
         var sequence = ++_renderSequence;
         var state = StateOf(CurrentBuffer);
-        _legacyToolbar?.SetMode(state.Mode == BaseMode.CommonMark);
         var path = CurrentPath();
         // 代替表示には「このファイルをプレビュー」のボタンがないので、すべての文書を表示する
         if (!legacy && !IsPreviewTarget(path, state))
@@ -700,7 +798,6 @@ internal static unsafe class PluginHost
         var folder = Path.IsPathFullyQualified(path) ? Path.GetDirectoryName(path) : null;
         _webView?.SetImageFolder(folder);
 
-        var mode = state.Mode;
         var features = state.Features;
         var strip = state.StripOuterFence;
         var language = _language;
@@ -712,7 +809,7 @@ internal static unsafe class PluginHost
             string payload;
             try
             {
-                var request = new RenderRequest(text, mode, features, strip, extra, host);
+                var request = new RenderRequest(text, features, strip, extra, host);
                 payload = legacy ? MarkdownRenderer.RenderLegacyPreview(request) : BuildRenderMessage(request, language);
             }
             catch (Exception ex)
@@ -751,7 +848,6 @@ internal static unsafe class PluginHost
             w.WriteString("type", "render");
             w.WriteString("html", result.Html);
             w.WriteBoolean("isEmpty", request.Text.Length == 0);
-            w.WriteString("mode", request.Mode.ToString());
             w.WriteStartArray("features");
             foreach (var feature in Enum.GetValues<SyntaxFeature>())
             {
@@ -828,6 +924,12 @@ internal static unsafe class PluginHost
 
     private static void PostCaret()
     {
+        // 追従しない設定では、カーソルの移動でプレビューを動かさない
+        if (!_settings.FollowCaret)
+        {
+            return;
+        }
+
         var line = Editor.CurrentLine;
         if (line != _lastCaretLine)
         {
@@ -954,11 +1056,8 @@ internal static unsafe class PluginHost
                 var language = Str("lang");
                 Format((t, s, e) => TextFormatter.InsertCodeBlock(t, s, e, language, Editor.Eol));
                 break;
-            case "setMode":
-                state.Mode = Enum.Parse<BaseMode>(Str("mode"));
-                _settings.DefaultMode = state.Mode;
-                SaveSettings();
-                ScheduleRender(1);
+            case "applySettings":
+                ApplySettings(Str("language"), root.GetProperty("followCaret").GetBoolean(), Str("engine"));
                 break;
             case "setFeature":
                 var feature = Enum.Parse<SyntaxFeature>(Str("feature"));
@@ -972,8 +1071,7 @@ internal static unsafe class PluginHost
                     selected |= Enum.Parse<SyntaxFeature>(item.GetString()!);
                 }
 
-                state.Features = selected;
-                ScheduleRender(1);
+                ApplyFeatures(state, selected, root.TryGetProperty("saveDefault", out var save) && save.GetBoolean());
                 break;
             case "stripFence":
                 state.StripOuterFence = root.GetProperty("on").GetBoolean();
@@ -986,9 +1084,6 @@ internal static unsafe class PluginHost
             case "update":
                 state.ManualUpdateRequested = true;
                 ScheduleRender(1);
-                break;
-            case "language":
-                SetLanguage(Str("language"));
                 break;
             case "openLink":
                 OpenExternal(Str("url"));
@@ -1028,6 +1123,9 @@ internal static unsafe class PluginHost
         SaveSettings();
         _language = AppSettings.ResolveLanguage(language, CultureInfo.CurrentUICulture);
         UpdateMenuLabels();
+        UpdatePanelTitle();
+        _legacyToolbar?.Relabel(Text);
+        LayoutLegacy();
         PostInit();
         ScheduleRender(1);
     }
@@ -1112,7 +1210,12 @@ internal static unsafe class PluginHost
                 SaveSettings();
             }
 
-            if (_webView is { IsReady: true } && _shellReady)
+            if (_webView is { IsReady: true } && _shellReady && kind == "settings")
+            {
+                PostSettings();
+                _webView.Focus();
+            }
+            else if (_webView is { IsReady: true } && _shellReady)
             {
                 var selection = SelectedText();
                 _webView.Post(Json(w =>
@@ -1131,7 +1234,25 @@ internal static unsafe class PluginHost
             return;
         }
 
-        ShowNativeInsertDialog(kind);
+        if (kind == "settings")
+        {
+            ShowNativeSettings();
+        }
+        else
+        {
+            ShowNativeInsertDialog(kind);
+        }
+    }
+
+    private static void PostSettings()
+    {
+        _webView?.Post(Json(w =>
+        {
+            w.WriteString("type", "settings");
+            w.WriteString("language", _settings.Language);
+            w.WriteBoolean("followCaret", _settings.FollowCaret);
+            w.WriteString("engine", UseIeEngine ? "ie" : "auto");
+        }));
     }
 
     private static string SelectedText()
@@ -1156,10 +1277,48 @@ internal static unsafe class PluginHost
     private static void CopyRich()
     {
         var state = StateOf(CurrentBuffer);
-        var request = new RenderRequest(Editor.GetText(), state.Mode, state.Features, state.StripOuterFence, _settings.ExtraHtmlTags);
+        var request = new RenderRequest(Editor.GetText(), state.Features, state.StripOuterFence, _settings.ExtraHtmlTags);
         var result = MarkdownRenderer.RenderForCopy(request);
         var ok = Clipboard.Set(Npp.Npp, result.PlainText, RichHtmlConverter.BuildClipboardHtml(result.Html));
         PostToast(!ok ? Text("copyFailed") : result.LocalImages > 0 ? string.Format(Text("copiedRichImages"), result.LocalImages) : Text("copiedRich"));
+    }
+
+    /// <summary>
+    /// 連続した1つの選択範囲を、単独のMarkdownとして書式付きでコピーする。
+    /// 全文向けの外側フェンスの除外は使わず、原文と選択は変更しない。
+    /// </summary>
+    private static void CopyRichSelection()
+    {
+        if (Editor.Send(Native.SciSelectionIsRectangle) != 0 || Editor.Send(Native.SciGetSelections) > 1)
+        {
+            PostToast(Text("selectionMultiple"));
+            return;
+        }
+
+        var fragment = SelectedText();
+        if (fragment.Length == 0)
+        {
+            PostToast(Text("selectionNone"));
+            return;
+        }
+
+        var state = StateOf(CurrentBuffer);
+        var request = new RenderRequest(fragment, state.Features, false, _settings.ExtraHtmlTags);
+        var result = MarkdownRenderer.RenderForCopy(request);
+        var ok = Clipboard.Set(Npp.Npp, result.PlainText, RichHtmlConverter.BuildClipboardHtml(result.Html));
+        if (!ok)
+        {
+            PostToast(Text("copyFailed"));
+            return;
+        }
+
+        var message = result.LocalImages > 0 ? string.Format(Text("copiedRichSelectionImages"), result.LocalImages) : Text("copiedRichSelection");
+        if (FragmentCheck.UsesOutsideDefinitions(Editor.GetText(), fragment, state.Features))
+        {
+            message += " " + Text("selectionOutside");
+        }
+
+        PostToast(message);
     }
 
     private static void UnwrapFence()

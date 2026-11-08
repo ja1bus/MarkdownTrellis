@@ -10,10 +10,11 @@ MarkdownTrellis is a Notepad++ plugin that makes Markdown easier to edit. It add
 - Formatting buttons: bold, italic, strikethrough, inline code, headings, bulleted list, numbered list, checklist, quote, code block, table, link, image, horizontal rule
 - Copy Source: copies the whole document exactly as written, including unsaved changes.
 - Copy Formatted: copies the preview with its formatting. Paste it into Teams, an email, and so on to keep headings, tables, bold text, and links.
-- Base syntax: switch between GFM (default) and CommonMark. Frontmatter is not shown in the preview.
+- Copy Selection Formatted: copies only the selected text with formatting.
+- Syntax: documents are shown as GFM (GitHub Flavored Markdown). Frontmatter is not shown in the preview.
 - Extra syntax: enable alerts, footnotes, math (shown as text), containers, highlight, wiki links, and definition lists per tab.
 - Outer code fence detection: notifies you when the whole document is wrapped in ```` ```markdown ````. You can remove just the two outer lines (undoable).
-- Display language: English and Japanese (follows the Windows display language by default)
+- Settings: from **⚙** > **Settings...** on the panel, change the display language (English and Japanese; follows the Windows display language by default), scrolling the preview to the cursor line, and the preview engine.
 
 Editing, saving, and undo use Notepad++ itself. The preview is read-only. Editing in the preview, rendering math or Mermaid, and exporting to Word or PDF are not supported.
 
@@ -36,11 +37,12 @@ Editing, saving, and undo use Notepad++ itself. The preview is read-only. Editin
 If WebView2 cannot start, the plugin automatically switches to a fallback preview that uses the IE engine. The fallback differs as follows:
 
 - Links and images are shown as text.
-- The panel uses standard Windows buttons. Formatting, inserting, copying, base syntax, and extra syntax remain available.
-- Notifications such as outer code fence detection, syntax normalization, and language switching are not available from the panel. Removing an outer code fence is still available from the menu.
+- The panel title shows [Simple preview].
+- The panel uses standard Windows buttons. Formatting, inserting, copying, extra syntax, and settings remain available.
+- There are no notifications such as outer code fence detection, no syntax normalization, and no scrolling to the cursor line. Removing an outer code fence is still available from the menu.
 - The IE engine is less protected than WebView2 and may be removed from Windows in the future.
 
-On PCs that switch to the fallback preview, each startup waits while WebView2 is tried and fails. Check **Plugins** > **MarkdownTrellis** > **Use IE Engine** to use the fallback preview without trying WebView2 (applies after restarting Notepad++).
+On PCs that switch to the fallback preview, each startup waits while WebView2 is tried and fails. Set the preview engine in Settings to **IE engine**, or check **Plugins** > **MarkdownTrellis** > **Use IE Engine**, to use the fallback preview without trying WebView2 (applies after restarting Notepad++).
 
 ## Installation
 
@@ -109,7 +111,8 @@ Settings are stored in `%LOCALAPPDATA%\MarkdownTrellis\settings.json`. Errors ar
 
 | Setting | Description |
 |---|---|
-| `PreviewEngine` | `auto` (default) or `ie` (always use the fallback preview). You can also switch it with **Use IE Engine** on the menu |
+| `PreviewEngine` | `auto` (default) or `ie` (always use the fallback preview). You can also switch it with the preview engine in Settings or **Use IE Engine** on the menu |
+| `FollowCaret` | Whether the preview scrolls to the cursor line (default `true`). You can switch it in Settings |
 | `ExtraHtmlTags` | Additional HTML tags to allow in the preview. Tags forbidden for safety cannot be allowed |
 
 ## Building

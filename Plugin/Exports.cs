@@ -9,7 +9,7 @@ internal static unsafe class Exports
     private static readonly delegate* unmanaged<void>[] Thunks =
     [
         &C0, &C1, &C2, &C3, &C4, &C5, &C6, &C7, &C8, &C9, &C10, &C11, &C12, &C13, &C14, &C15,
-        &C16, &C17, &C18, &C19, &C20, &C21, &C22, &C23, &C24, &C25, &C26, &C27, &C28, &C29,
+        &C16, &C17, &C18, &C19, &C20, &C21, &C22, &C23, &C24, &C25, &C26, &C27, &C28, &C29, &C30, &C31, &C32, &C33, &C34, &C35,
     ];
 
     private static FuncItem* _items;
@@ -38,6 +38,11 @@ internal static unsafe class Exports
         try
         {
             var commands = PluginHost.Commands;
+            if (commands.Count > Thunks.Length)
+            {
+                throw new InvalidOperationException($"Add thunks: {commands.Count} commands, {Thunks.Length} thunks.");
+            }
+
             if (_items == null)
             {
                 _items = (FuncItem*)NativeMemory.AllocZeroed((nuint)(sizeof(FuncItem) * commands.Count));
@@ -109,4 +114,10 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly] private static void C27() => Run(27);
     [UnmanagedCallersOnly] private static void C28() => Run(28);
     [UnmanagedCallersOnly] private static void C29() => Run(29);
+    [UnmanagedCallersOnly] private static void C30() => Run(30);
+    [UnmanagedCallersOnly] private static void C31() => Run(31);
+    [UnmanagedCallersOnly] private static void C32() => Run(32);
+    [UnmanagedCallersOnly] private static void C33() => Run(33);
+    [UnmanagedCallersOnly] private static void C34() => Run(34);
+    [UnmanagedCallersOnly] private static void C35() => Run(35);
 }

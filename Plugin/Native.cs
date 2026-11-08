@@ -142,6 +142,7 @@ internal static partial class Native
     public const uint NppmGetMenuHandle = NppMsg + 25;
     public const uint NppmDmmShow = NppMsg + 30;
     public const uint NppmDmmHide = NppMsg + 31;
+    public const uint NppmDmmUpdateDispInfo = NppMsg + 32;
     public const uint NppmDmmRegAsDckDlg = NppMsg + 33;
     public const uint NppmSetMenuItemCheck = NppMsg + 40;
     public const uint NppmGetFullPathFromBufferId = NppMsg + 58;
@@ -178,6 +179,7 @@ internal static partial class Native
     public const uint SciSetTargetStart = 2190;
     public const uint SciSetTargetEnd = 2192;
     public const uint SciReplaceTarget = 2194;
+    public const uint SciSelectionIsRectangle = 2372;
     public const uint SciGrabFocus = 2400;
     public const uint SciGetCharacterPointer = 2520;
     public const uint SciGetSelections = 2570;
@@ -193,6 +195,8 @@ internal static partial class Native
     public const uint MbIconInformation = 0x40;
     public const uint MfByCommand = 0;
     public const uint MfString = 0;
+    public const uint MfSeparator = 0x800;
+    public const uint TpmReturnCmd = 0x100;
     public const uint GmemMoveable = 2;
     public const uint CfUnicodeText = 13;
     public const int VkControl = 0x11;
@@ -243,6 +247,28 @@ internal static partial class Native
     [LibraryImport("user32", EntryPoint = "ModifyMenuW", StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static partial bool ModifyMenu(nint menu, uint position, uint flags, nuint id, string text);
+
+    [LibraryImport("user32")]
+    public static partial nint CreatePopupMenu();
+
+    [LibraryImport("user32", EntryPoint = "AppendMenuW", StringMarshalling = StringMarshalling.Utf16)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool AppendMenu(nint menu, uint flags, nuint id, string? text);
+
+    [LibraryImport("user32")]
+    public static partial int TrackPopupMenu(nint menu, uint flags, int x, int y, int reserved, nint window, nint rect);
+
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool DestroyMenu(nint menu);
+
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool GetWindowRect(nint window, out Rect rect);
+
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool ShowWindow(nint window, int command);
 
     [LibraryImport("user32", EntryPoint = "GetMenuStringW")]
     public static unsafe partial int GetMenuString(nint menu, uint id, char* buffer, int max, uint flags);

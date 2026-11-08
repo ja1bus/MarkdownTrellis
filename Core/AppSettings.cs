@@ -11,8 +11,6 @@ public sealed class AppSettings
 
     public bool PanelVisible { get; set; }
 
-    public BaseMode DefaultMode { get; set; } = BaseMode.Gfm;
-
     public SyntaxFeature DefaultFeatures { get; set; } = SyntaxFeature.None;
 
     /// <summary>許可するHTMLタグの追加分。常に禁止のタグは追加できない。</summary>
@@ -20,6 +18,9 @@ public sealed class AppSettings
 
     /// <summary>auto（WebView2を試し、失敗したらIEエンジン）または ie（最初からIEエンジン）。</summary>
     public string PreviewEngine { get; set; } = "auto";
+
+    /// <summary>カーソル行に合わせてプレビューをスクロールする（通常表示のみ）。</summary>
+    public bool FollowCaret { get; set; } = true;
 
     public static string ToJson(AppSettings settings) => JsonSerializer.Serialize(settings, SettingsJsonContext.Default.AppSettings);
 

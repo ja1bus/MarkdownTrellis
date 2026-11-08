@@ -5,13 +5,19 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src https://doc.markdowntrellis.example">
 <title>MarkdownTrellis</title>
 <style>
-  :root { --bg:#f6f6f6; --fg:#222; --line:#ccc; --btn:#fff; --hover:#e6e6e6; --accent:#0b63c5; --notice:#fff8e1; }
-  :root.dark { --bg:#2b2b2b; --fg:#ddd; --line:#555; --btn:#3a3a3a; --hover:#4a4a4a; --accent:#6db1ff; --notice:#463f24; }
+  :root { --bg:#f6f6f6; --fg:#222; --muted:#666; --line:#ccc; --btn:#fff; --hover:#e6e6e6; --accent:#0b63c5; --notice:#fff8e1; }
+  :root.dark { --bg:#2b2b2b; --fg:#ddd; --muted:#aaa; --line:#555; --btn:#3a3a3a; --hover:#4a4a4a; --accent:#6db1ff; --notice:#463f24; }
   * { box-sizing:border-box; }
   html, body { height:100%; margin:0; }
   body { display:flex; flex-direction:column; background:var(--bg); color:var(--fg); font:12px "Segoe UI","Yu Gothic UI",sans-serif; overflow:hidden; }
   #bar { display:flex; flex-wrap:wrap; gap:2px 6px; padding:4px; border-bottom:1px solid var(--line); }
   .group { display:flex; flex-wrap:wrap; gap:2px; align-items:center; min-width:0; }
+  .group.end { margin-left:auto; }
+  .menu { position:fixed; z-index:5; display:none; flex-direction:column; min-width:150px; max-width:calc(100vw - 8px); padding:2px; background:var(--btn); border:1px solid var(--line); border-radius:3px; box-shadow:0 2px 6px rgba(0,0,0,.25); }
+  .menu.open { display:flex; }
+  .menu button { border:0; text-align:left; height:26px; padding:0 8px; overflow:hidden; text-overflow:ellipsis; }
+  .menu .icon { display:inline-block; width:1.6em; }
+  .menu hr { width:100%; margin:2px 0; border:0; border-top:1px solid var(--line); }
   button, select, input { font:inherit; color:var(--fg); background:var(--btn); border:1px solid var(--line); border-radius:3px; }
   button { min-width:24px; height:24px; padding:0 5px; cursor:pointer; white-space:nowrap; }
   button:hover:not(:disabled) { background:var(--hover); }
@@ -24,12 +30,20 @@
   #frame { flex:1; width:100%; border:0; background:var(--bg); min-height:0; }
   #toast { position:fixed; left:8px; right:8px; bottom:8px; padding:6px 8px; background:var(--accent); color:#fff; border-radius:3px; display:none; }
   #overlay { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; align-items:flex-start; justify-content:center; padding:24px 8px; }
-  #dialog { width:100%; max-width:420px; max-height:100%; overflow:auto; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:10px; }
+  #dialog { width:100%; max-width:420px; max-height:100%; overflow-x:hidden; overflow-y:auto; overflow-wrap:anywhere; background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:10px; }
   #dialog label { display:block; margin:6px 0 2px; }
   #dialog h3 { margin:0 0 6px; font-size:13px; }
   #dialog .actions { display:flex; justify-content:flex-end; gap:4px; margin-top:10px; }
   #dialog .check { display:flex; gap:6px; align-items:center; margin:4px 0; }
-  #dialog .check input { width:auto; }
+  #dialog .check input { width:auto; margin:0; }
+  #dialog .check.option { margin:2px 0 2px 4px; }
+  #dialog h4 { margin:12px 0 4px; font-size:12px; }
+  #dialog .help { margin:0 0 4px 22px; color:var(--muted); font-size:11px; }
+  #dialog .note { margin:2px 0 4px; color:var(--muted); font-size:11px; }
+  #dialog details { margin:12px 0 4px; }
+  #dialog summary { cursor:pointer; font-weight:bold; }
+  #dialog .about { white-space:pre-line; margin:4px 0 0; color:var(--muted); font-size:11px; }
+  #dialog .version { margin:12px 0 0; color:var(--muted); font-size:11px; }
   .change { border-top:1px solid var(--line); padding:4px 0; font-family:Consolas,monospace; white-space:pre-wrap; word-break:break-all; }
   .before { color:#c0392b; } .after { color:#1e8449; }
   :root.dark .before { color:#ff8a80; } :root.dark .after { color:#8bdb9b; }
@@ -38,34 +52,35 @@
 <body>
 <div id="bar">
   <div class="group">
-    <button data-run="bold" data-title="bold"><b>B</b></button>
-    <button data-run="italic" data-title="italic"><i>I</i></button>
-    <button data-run="strike" data-title="strike" data-gfm><s>S</s></button>
-    <button data-run="code" data-title="code">&lt;/&gt;</button>
     <select id="heading" data-title="heading"></select>
-  </div>
-  <div class="group">
+    <button data-run="bold" data-title="bold"><b>B</b></button>
     <button data-run="ul" data-title="ul">•</button>
     <button data-run="ol" data-title="ol">1.</button>
-    <button data-run="task" data-title="task" data-gfm>☑</button>
-    <button data-run="quote" data-title="quote">❝</button>
-  </div>
-  <div class="group">
-    <button data-dialog="codeblock" data-title="codeblockHelp">{ }</button>
-    <button data-dialog="table" data-title="table" data-gfm>▦</button>
+    <button data-run="task" data-title="task">☑</button>
     <button data-dialog="link" data-title="link">🔗</button>
-    <button data-dialog="image" data-title="image">🖼</button>
-    <button data-run="hr" data-title="hr">―</button>
+    <button data-dialog="table" data-title="table">▦</button>
+    <button data-run="code" data-title="code">&lt;/&gt;</button>
+    <button data-dialog="codeblock" data-title="codeblockHelp">{ }</button>
+    <button data-menu="moreMenu" data-title="more" aria-haspopup="menu"><span data-label="more"></span> ▾</button>
   </div>
-  <div class="group">
+  <div class="group end">
     <button id="copyMarkdown" data-run="copyMarkdown" data-label="copyMarkdown" data-title="copyMarkdownHelp"></button>
     <button id="copyRich" data-run="copyRich" data-label="copyRich" data-title="copyRichHelp"></button>
+    <button data-menu="settingsMenu" data-title="menuSettings" aria-haspopup="menu">⚙ ▾</button>
   </div>
-  <div class="group">
-    <select id="mode" data-title="mode"><option value="Gfm">GFM</option><option value="CommonMark">CommonMark</option></select>
-    <button id="features" data-label="features"></button>
-    <select id="language" data-title="language"></select>
-  </div>
+</div>
+<div id="moreMenu" class="menu" role="menu">
+  <button role="menuitem" data-run="italic"><span class="icon"><i>I</i></span><span data-label="italic"></span></button>
+  <button role="menuitem" data-run="strike" data-title="strike"><span class="icon"><s>S</s></span><span data-label="strike"></span></button>
+  <button role="menuitem" data-run="quote"><span class="icon">❝</span><span data-label="quote"></span></button>
+  <button role="menuitem" data-dialog="image"><span class="icon">🖼</span><span data-label="image"></span></button>
+  <button role="menuitem" data-run="hr"><span class="icon">―</span><span data-label="hr"></span></button>
+  <hr>
+  <button role="menuitem" data-run="copyRichSelection" data-title="copyRichSelectionHelp"><span class="icon">⧉</span><span data-label="copyRichSelection"></span></button>
+</div>
+<div id="settingsMenu" class="menu" role="menu">
+  <button role="menuitem" id="features"><span data-label="featuresMenu"></span></button>
+  <button role="menuitem" data-run="settings"><span data-label="settings"></span></button>
 </div>
 <div id="notices"></div>
 <iframe id="frame" sandbox="allow-same-origin allow-popups" title="preview"></iframe>
@@ -105,11 +120,11 @@ const DOC_CSS = `
 
 let strings = {};
 let dark = false;
-let modeValue = 'Gfm';
 let activeFeatures = [];
 let frameReady = false;
 let pending = null;
 let toastTimer = 0;
+let version = '';
 
 const $ = id => document.getElementById(id);
 const t = key => strings[key] ?? key;
@@ -129,6 +144,7 @@ function setupFrame() {
 }
 
 function onFrameClick(event) {
+  closeMenus();
   const link = event.target.closest ? event.target.closest('a[href]') : null;
   if (!link) return;
   event.preventDefault();
@@ -175,21 +191,7 @@ function applyStrings(language) {
   headingOption('', t('heading'));
   for (let i = 1; i <= 6; i++) headingOption(String(i), t('h' + i));
   headingOption('0', t('headingNone'));
-  const lang = $('language');
-  lang.innerHTML = '';
-  for (const [value, label] of [['system', t('languageSystem')], ['en', 'English'], ['ja', '日本語']]) {
-    const o = document.createElement('option'); o.value = value; o.textContent = label; lang.append(o);
-  }
-  lang.value = language;
   document.documentElement.lang = strings.bold === '太字' ? 'ja' : 'en';
-}
-
-function applyMode() {
-  $('mode').value = modeValue;
-  document.querySelectorAll('[data-gfm]').forEach(el => {
-    el.disabled = modeValue !== 'Gfm';
-    el.title = modeValue === 'Gfm' ? t(el.dataset.title) : t(el.dataset.title) + ' (' + t('gfmOnly') + ')';
-  });
 }
 
 function button(label, onClick) {
@@ -220,6 +222,27 @@ function renderNotices(notices) {
 
     box.append(row);
   }
+}
+
+function closeMenus() {
+  document.querySelectorAll('.menu.open').forEach(menu => menu.classList.remove('open'));
+  document.querySelectorAll('[data-menu]').forEach(el => el.setAttribute('aria-expanded', 'false'));
+}
+
+// メニューはボタンの下に出し、パネルの幅からはみ出さないようにする
+function openMenu(button) {
+  const menu = $(button.dataset.menu);
+  const wasOpen = menu.classList.contains('open');
+  closeMenus();
+  if (wasOpen) return;
+  menu.classList.add('open');
+  button.setAttribute('aria-expanded', 'true');
+  const rect = button.getBoundingClientRect();
+  const width = document.documentElement.clientWidth;
+  menu.style.left = Math.max(4, Math.min(rect.left, width - menu.offsetWidth - 4)) + 'px';
+  menu.style.top = (rect.bottom + 2) + 'px';
+  const first = menu.querySelector('button:not(:disabled)');
+  if (first) first.focus();
 }
 
 function closeDialog() {
@@ -288,42 +311,109 @@ function showInsertDialog(kind, selected) {
   }
 }
 
+function addHeading(parent, text, tag) {
+  const heading = document.createElement(tag || 'h4');
+  heading.textContent = text;
+  parent.append(heading);
+}
+
+function addNote(parent, text, className) {
+  const note = document.createElement('p');
+  note.className = className || 'note';
+  note.textContent = text;
+  parent.append(note);
+}
+
+function addCheck(parent, type, name, value, label, checked) {
+  const row = document.createElement('label');
+  row.className = type === 'radio' ? 'check option' : 'check';
+  const input = document.createElement('input');
+  input.type = type;
+  input.name = name;
+  input.value = value;
+  input.checked = checked;
+  row.append(input, document.createTextNode(label));
+  parent.append(row);
+  return input;
+}
+
+function finishDialog(dialog, actions) {
+  actions.className = 'actions';
+  actions.style.flexWrap = 'wrap';
+  dialog.append(actions);
+  dialog.onkeydown = e => { if (e.key === 'Escape') closeDialog(); };
+  $('overlay').style.display = 'flex';
+  const first = dialog.querySelector('input');
+  if (first) first.focus();
+}
+
+// 追加構文: OKで現在のタブに適用する。既定値への保存は開くたびに未チェックから始める
 function showFeatures() {
+  closeMenus();
   const dialog = $('dialog');
   dialog.innerHTML = '';
-  const heading = document.createElement('h3');
-  heading.textContent = t('features');
-  dialog.append(heading);
-  const help = document.createElement('p');
-  help.textContent = t('featuresHelp');
-  dialog.append(help);
+  addHeading(dialog, t('features'), 'h3');
+  addNote(dialog, t('featuresHelp'));
   for (const feature of FEATURES) {
-    const label = document.createElement('label');
-    label.className = 'check';
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.checked = activeFeatures.includes(feature);
+    const box = addCheck(dialog, 'checkbox', 'feature', feature, t('feature' + feature), activeFeatures.includes(feature));
     box.dataset.feature = feature;
-    label.append(box, document.createTextNode(t('feature' + feature)));
-    dialog.append(label);
+    addNote(dialog, t('feature' + feature + 'Help'), 'help');
   }
 
+  const saveDefault = addCheck(dialog, 'checkbox', 'saveDefault', '1', t('featuresSaveDefault'), false);
+  saveDefault.parentElement.style.marginTop = '10px';
+  const boxes = () => [...dialog.querySelectorAll('input[data-feature]')];
   const actions = document.createElement('div');
-  actions.className = 'actions';
-  const boxes = () => [...dialog.querySelectorAll('input[type=checkbox]')];
   actions.append(
     button('OK', () => {
-      post('setFeatures', { features: boxes().filter(box => box.checked).map(box => box.dataset.feature) });
+      post('setFeatures', { features: boxes().filter(box => box.checked).map(box => box.dataset.feature), saveDefault: saveDefault.checked });
       closeDialog();
     }),
     button(t('presetGitHub'), () => {
       boxes().forEach(box => { if (GITHUB_FEATURES.includes(box.dataset.feature)) box.checked = true; });
     }),
-    button(t('clearAll'), () => { boxes().forEach(box => { box.checked = false; }); }));
-  actions.style.flexWrap = 'wrap';
-  dialog.append(actions);
-  dialog.onkeydown = e => { if (e.key === 'Escape') closeDialog(); };
-  $('overlay').style.display = 'flex';
+    button(t('clearAll'), () => { boxes().forEach(box => { box.checked = false; }); }),
+    button(t('cancel'), closeDialog));
+  finishDialog(dialog, actions);
+}
+
+// 設定: OKで確定し、キャンセルとEscでは何も変えない
+function showSettings(current) {
+  closeMenus();
+  const dialog = $('dialog');
+  dialog.innerHTML = '';
+  addHeading(dialog, t('settingsTitle'), 'h3');
+
+  addHeading(dialog, t('language'));
+  for (const [value, label] of [['system', t('languageSystem')], ['ja', '日本語'], ['en', 'English']]) {
+    addCheck(dialog, 'radio', 'language', value, label, current.language === value);
+  }
+
+  addHeading(dialog, t('preview'));
+  const follow = addCheck(dialog, 'checkbox', 'followCaret', '1', t('followCaret'), current.followCaret);
+
+  addHeading(dialog, t('engine'));
+  addCheck(dialog, 'radio', 'engine', 'auto', t('engineAuto'), current.engine !== 'ie');
+  addCheck(dialog, 'radio', 'engine', 'ie', t('engineIe'), current.engine === 'ie');
+  addNote(dialog, t('engineRestart'));
+
+  const about = document.createElement('details');
+  const summary = document.createElement('summary');
+  summary.textContent = t('simpleAbout');
+  about.append(summary);
+  addNote(about, t('simpleAboutText'), 'about');
+  dialog.append(about);
+  addNote(dialog, t('versionLine').replace('{0}', version), 'version');
+
+  const value = name => dialog.querySelector('input[name=' + name + ']:checked').value;
+  const actions = document.createElement('div');
+  actions.append(
+    button('OK', () => {
+      post('applySettings', { language: value('language'), followCaret: follow.checked, engine: value('engine') });
+      closeDialog();
+    }),
+    button(t('cancel'), closeDialog));
+  finishDialog(dialog, actions);
 }
 
 function showNormalize(message) {
@@ -385,18 +475,16 @@ chrome.webview.addEventListener('message', event => {
   switch (message.type) {
     case 'init':
       strings = message.strings;
+      version = message.version;
       document.title = 'MarkdownTrellis ' + message.version;
       applyStrings(message.language);
-      applyMode();
       break;
     case 'theme':
       dark = message.dark;
       applyTheme();
       break;
     case 'render':
-      modeValue = message.mode;
       activeFeatures = message.features;
-      applyMode();
       renderNotices(message.notices);
       setHtml(message.isEmpty ? '<p class="trellis-empty">' + t('empty').replace(/[<>&]/g, '') + '</p>' : message.html);
       break;
@@ -413,6 +501,9 @@ chrome.webview.addEventListener('message', event => {
     case 'dialog':
       showInsertDialog(message.kind, message.text);
       break;
+    case 'settings':
+      showSettings(message);
+      break;
     case 'normalizePreview':
       showNormalize(message);
       break;
@@ -423,14 +514,17 @@ chrome.webview.addEventListener('message', event => {
   }
 });
 
-document.querySelectorAll('[data-run]').forEach(el => el.addEventListener('click', () => post('run', { name: el.dataset.run })));
-document.querySelectorAll('[data-dialog]').forEach(el => el.addEventListener('click', () => post('dialog', { kind: el.dataset.dialog })));
+document.querySelectorAll('[data-run]').forEach(el => el.addEventListener('click', () => { closeMenus(); post('run', { name: el.dataset.run }); }));
+document.querySelectorAll('[data-dialog]').forEach(el => el.addEventListener('click', () => { closeMenus(); post('dialog', { kind: el.dataset.dialog }); }));
+document.querySelectorAll('[data-menu]').forEach(el => el.addEventListener('click', () => openMenu(el)));
+document.addEventListener('click', e => { if (!e.target.closest('.menu, [data-menu]')) closeMenus(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeMenus(); });
+window.addEventListener('blur', closeMenus);
+window.addEventListener('resize', closeMenus);
 $('heading').addEventListener('change', e => {
   if (e.target.value !== '') post('heading', { level: Number(e.target.value) });
   e.target.value = '';
 });
-$('mode').addEventListener('change', e => post('setMode', { mode: e.target.value }));
-$('language').addEventListener('change', e => post('language', { language: e.target.value }));
 $('features').addEventListener('click', showFeatures);
 setupFrame();
 </script>

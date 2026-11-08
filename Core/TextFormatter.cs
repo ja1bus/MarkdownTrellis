@@ -215,7 +215,7 @@ public static partial class TextFormatter
         lineEnd = lineEnd < 0 ? text.Length : lineEnd;
         var before = text[lineStart..lineEnd];
         var after = text[lineStart..coreStart] + replacement + text[coreEnd..lineEnd];
-        var pipeline = MarkdownRenderer.GetPipeline(BaseMode.Gfm, SyntaxFeature.None);
+        var pipeline = MarkdownRenderer.GetPipeline(SyntaxFeature.None);
         return CountEmphasis(after, pipeline) > CountEmphasis(before, pipeline);
     }
 

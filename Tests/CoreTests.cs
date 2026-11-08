@@ -7,8 +7,8 @@ namespace MarkdownTrellis.Tests;
 
 public class RendererTests
 {
-    private static string Preview(string text, BaseMode mode = BaseMode.Gfm, SyntaxFeature features = SyntaxFeature.None, string? host = null) =>
-        MarkdownRenderer.RenderPreview(new RenderRequest(text, mode, features, ImageHost: host)).Html;
+    private static string Preview(string text, SyntaxFeature features = SyntaxFeature.None, string? host = null) =>
+        MarkdownRenderer.RenderPreview(new RenderRequest(text, features, ImageHost: host)).Html;
 
     [Fact]
     public void Empty_document_renders_empty() => Assert.Equal(string.Empty, Preview(string.Empty));
@@ -27,23 +27,19 @@ public class RendererTests
     }
 
     [Fact]
-    public void CommonMark_does_not_render_gfm_only_syntax()
+    public void Frontmatter_is_not_rendered()
     {
-        var html = Preview("~~old~~\n\n| a |\n| --- |\n", BaseMode.CommonMark);
-        Assert.DoesNotContain("<del>", html);
-        Assert.DoesNotContain("<table", html);
+        var html = Preview("---\ntitle: \"x\"\n---\n\n# Body\n");
+        Assert.DoesNotContain("title", html);
+        Assert.Contains("Body", html);
     }
 
     [Fact]
-    public void Frontmatter_is_not_rendered_in_either_mode()
+    public void Old_default_mode_setting_is_ignored()
     {
-        const string Text = "---\ntitle: \"x\"\n---\n\n# Body\n";
-        foreach (var mode in new[] { BaseMode.Gfm, BaseMode.CommonMark })
-        {
-            var html = Preview(Text, mode);
-            Assert.DoesNotContain("title", html);
-            Assert.Contains("Body", html);
-        }
+        var copy = AppSettings.FromJson("{\"DefaultMode\": \"CommonMark\", \"Language\": \"en\"}");
+        Assert.Equal("en", copy.Language);
+        Assert.Contains("<del>", Preview("~~old~~"));
     }
 
     [Fact]
@@ -781,10 +777,10 @@ public class SettingsTests
     [Fact]
     public void Settings_round_trip()
     {
-        var settings = new AppSettings { Language = "ja", DefaultMode = BaseMode.CommonMark, DefaultFeatures = SyntaxFeature.Alerts | SyntaxFeature.Footnotes, ExtraHtmlTags = ["nav"], PanelVisible = true };
+        var settings = new AppSettings { Language = "ja", FollowCaret = false, DefaultFeatures = SyntaxFeature.Alerts | SyntaxFeature.Footnotes, ExtraHtmlTags = ["nav"], PanelVisible = true };
         var copy = AppSettings.FromJson(AppSettings.ToJson(settings));
         Assert.Equal("ja", copy.Language);
-        Assert.Equal(BaseMode.CommonMark, copy.DefaultMode);
+        Assert.False(copy.FollowCaret);
         Assert.Equal(SyntaxFeature.Alerts | SyntaxFeature.Footnotes, copy.DefaultFeatures);
         Assert.Equal(["nav"], copy.ExtraHtmlTags);
         Assert.True(copy.PanelVisible);
@@ -815,4 +811,45 @@ public class SettingsTests
 
     [Fact]
     public void Every_string_has_both_languages() => Assert.Equal(Strings.All("en").Count(), Strings.All("ja").Count());
+
+    [Fact]
+    public void Feature_help_exists_for_every_feature()
+    {
+        foreach (var feature in Enum.GetValues<SyntaxFeature>().Where(f => f != SyntaxFeature.None))
+        {
+            var key = Strings.FeatureKey(feature) + "Help";
+            Assert.NotEqual(key, Strings.Get("ja", key));
+        }
+    }
+
+    [Fact]
+    public void Follow_caret_is_on_by_default_and_for_old_settings()
+    {
+        Assert.True(new AppSettings().FollowCaret);
+        Assert.True(AppSettings.FromJson("{\"Language\": \"ja\"}").FollowCaret);
+    }
+
+    [Fact]
+    public void Selection_copy_detects_definitions_outside_the_selection()
+    {
+        const string Document = "See [the docs][Docs] and a note[^1].\n\n[docs]: https://example.com/\n[^1]: Note text.\n";
+        Assert.True(FragmentCheck.UsesOutsideDefinitions(Document, "See [the docs][Docs].", SyntaxFeature.None));
+        Assert.True(FragmentCheck.UsesOutsideDefinitions(Document, "a note[^1].", SyntaxFeature.Footnotes));
+
+        // 脚注を解釈しない設定では、脚注の定義の有無を知らせない
+        Assert.False(FragmentCheck.UsesOutsideDefinitions(Document, "a note[^1].", SyntaxFeature.None));
+
+        // 定義も選択に含まれていれば、知らせない
+        Assert.False(FragmentCheck.UsesOutsideDefinitions(Document, Document, SyntaxFeature.Footnotes));
+        Assert.False(FragmentCheck.UsesOutsideDefinitions(Document, "Plain text only.", SyntaxFeature.Footnotes));
+    }
+
+    [Fact]
+    public void Selection_copy_renders_only_the_fragment()
+    {
+        const string Fragment = "| a | b |\n| --- | --- |\n| 1 | ~~2~~ |\n";
+        var result = MarkdownRenderer.RenderForCopy(new RenderRequest(Fragment, StripOuterFence: false));
+        Assert.Contains("<table", result.Html);
+        Assert.Contains("<del>", result.Html);
+    }
 }

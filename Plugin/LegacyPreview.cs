@@ -174,85 +174,161 @@ internal sealed unsafe class LegacyPreview
     }
 }
 
-/// <summary>代替表示で使うWindows標準のボタンと状態表示。パネルの上部に折り返して並べる。</summary>
+/// <summary>
+/// 代替表示で使うWindows標準のボタンと状態表示。パネルの上部に折り返して並べる。
+/// 使う頻度の低い書式は［その他］、追加構文と設定は歯車のメニューにまとめる。IEの表示は狭いパネルで使うことが多いので、メニューの2つを並べ、コピーを最後の行に置く。
+/// </summary>
 internal sealed class LegacyToolbar
 {
     public const int FirstCommandId = 2000;
+    public const int MoreButtonId = 3002;
+    public const int SettingsButtonId = 3003;
+    public const int CloseStatusId = 3004;
 
-    private const int Margin = 2;
+    /// <summary>歯車メニューの［追加構文...］。コマンドの番号と重ならない値にする。</summary>
+    public const int FeaturesMenuId = 3100;
 
+    /// <summary>ボタンに出す文字。nullは表示言語の文字を使う。</summary>
     private static readonly (string Key, string? Label)[] Items =
     [
-        ("bold", "B"), ("italic", "I"), ("strike", "S"), ("code", "</>"),
-        ("h1", "H1"), ("h2", "H2"), ("h3", "H3"),
-        ("ul", "•"), ("ol", "1."), ("task", "☑"), ("quote", "❝"),
-        ("codeblock", "{ }"), ("table", "▦"), ("link", null), ("image", null), ("hr", "―"),
-        ("copyMarkdown", null), ("copyRich", null),
+        ("h1", "H1"), ("h2", "H2"), ("h3", "H3"), ("bold", "B"),
+        ("ul", "•"), ("ol", "1."), ("task", "☑"),
+        ("link", null), ("table", "▦"), ("code", "</>"), ("codeblock", "{ }"),
     ];
 
-    public const int ModeComboId = 3000;
-    public const int FeaturesButtonId = 3001;
+    private static readonly string[] MoreItems = ["italic", "strike", "quote", "image", "hr", string.Empty, "copyRichSelection"];
 
-    private const uint CbAddString = 0x0143;
-    private const uint CbSetCurSel = 0x014E;
-    private const uint CbGetCurSel = 0x0147;
-    private const uint CbsDropDownList = 3;
+    private const int Margin = 2;
     private const uint WmSetFont = 0x0030;
-    private const int ComboDropHeight = 120;
 
-    private readonly List<(nint Window, int Width, bool IsCombo)> _buttons = [];
+    private readonly List<ToolButton> _buttons = [];
     private readonly nint _parent;
     private nint _status;
-    private nint _mode;
+    private nint _closeStatus;
     private nint _font;
     private string _statusText = string.Empty;
+
+    private sealed class ToolButton
+    {
+        public nint Window;
+        public int Width;
+        public string Key = string.Empty;
+        public bool Localized;
+        public bool BreakBefore;
+    }
 
     public LegacyToolbar(nint parent) => _parent = parent;
 
     public void Create(nint instance, IReadOnlyList<PluginCommand> commands, Func<string, string> text)
     {
         _font = Native.GetStockObject(17);
-        var scale = Native.GetDpiForWindow(_parent) / 96.0;
+        var scale = Scale;
         foreach (var (key, label) in Items)
         {
-            var index = commands.ToList().FindIndex(c => c.Key == key);
+            var index = IndexOf(commands, key);
             if (index >= 0)
             {
-                var caption = label ?? text(key).TrimEnd('.');
-                AddButton(instance, caption, FirstCommandId + index, scale);
+                AddButton(instance, key, label ?? text(key).TrimEnd('.'), label is null, FirstCommandId + index, scale);
             }
         }
 
-        _mode = Native.CreateWindowEx(0, "COMBOBOX", string.Empty, Native.WsChild | Native.WsVisible | CbsDropDownList, 0, 0, 100, ComboDropHeight, _parent, ModeComboId, instance, 0);
-        Native.SendMessage(_mode, WmSetFont, _font, 1);
-        Native.SendMessageText(_mode, CbAddString, 0, "GFM");
-        Native.SendMessageText(_mode, CbAddString, 0, "CommonMark");
-        _buttons.Add((_mode, (int)(100 * scale), true));
-        AddButton(instance, text("features"), FeaturesButtonId, scale);
+        AddButton(instance, "more", text("more") + " ▾", true, MoreButtonId, scale);
+        AddButton(instance, "settingsMenu", "⚙ ▾", false, SettingsButtonId, scale);
 
-        _status = Native.CreateWindowEx(0, "STATIC", string.Empty, Native.WsChild | Native.WsVisible, 0, 0, 100, 20, _parent, 0, instance, 0);
+        // コピーの2つは1つのまとまりとして、狭いときは次の行へまとめて移す
+        AddButton(instance, "copyMarkdown", text("copyMarkdown"), true, FirstCommandId + IndexOf(commands, "copyMarkdown"), scale).BreakBefore = true;
+        AddButton(instance, "copyRich", text("copyRich"), true, FirstCommandId + IndexOf(commands, "copyRich"), scale);
+
+        _status = Native.CreateWindowEx(0, "STATIC", string.Empty, Native.WsChild, 0, 0, 100, 20, _parent, 0, instance, 0);
         Native.SendMessage(_status, WmSetFont, _font, 1);
+        _closeStatus = Native.CreateWindowEx(0, "BUTTON", "×", Native.WsChild, 0, 0, 20, 20, _parent, CloseStatusId, instance, 0);
+        Native.SendMessage(_closeStatus, WmSetFont, _font, 1);
     }
 
-    private void AddButton(nint instance, string caption, int id, double scale)
+    private double Scale => Native.GetDpiForWindow(_parent) / 96.0;
+
+    private static int IndexOf(IReadOnlyList<PluginCommand> commands, string key)
     {
-        var width = (int)((caption.Length <= 3 ? 30 : 16 + (caption.Length * 13)) * scale);
-        var button = Native.CreateWindowEx(0, "BUTTON", caption, Native.WsChild | Native.WsVisible, 0, 0, width, 24, _parent, id, instance, 0);
-        Native.SendMessage(button, WmSetFont, _font, 1);
-        _buttons.Add((button, width, false));
+        for (var i = 0; i < commands.Count; i++)
+        {
+            if (commands[i].Key == key)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int WidthOf(string caption, double scale) => (int)((caption.Length <= 3 ? 30 : 16 + (caption.Length * 13)) * scale);
+
+    private ToolButton AddButton(nint instance, string key, string caption, bool localized, int id, double scale)
+    {
+        var width = WidthOf(caption, scale);
+        var window = Native.CreateWindowEx(0, "BUTTON", caption, Native.WsChild | Native.WsVisible, 0, 0, width, 24, _parent, id, instance, 0);
+        Native.SendMessage(window, WmSetFont, _font, 1);
+        var button = new ToolButton { Window = window, Width = width, Key = key, Localized = localized };
+        _buttons.Add(button);
+        return button;
+    }
+
+    /// <summary>表示言語を変えたときに、文字のボタンを付け直す。</summary>
+    public void Relabel(Func<string, string> text)
+    {
+        var scale = Scale;
+        foreach (var button in _buttons.Where(b => b.Localized))
+        {
+            var caption = button.Key == "more" ? text("more") + " ▾" : text(button.Key).TrimEnd('.');
+            Native.SetWindowText(button.Window, caption);
+            button.Width = WidthOf(caption, scale);
+        }
     }
 
     public void SetStatus(string text)
     {
         _statusText = text;
         Native.SetWindowText(_status, text);
+        var show = text.Length > 0 ? 5 : 0;
+        Native.ShowWindow(_status, show);
+        Native.ShowWindow(_closeStatus, show);
     }
 
-    public void SetMode(bool isCommonMark) => Native.SendMessage(_mode, CbSetCurSel, isCommonMark ? 1 : 0, 0);
+    /// <summary>［その他］または歯車のメニューを出し、選ばれた項目のIDを返す（取り消しは0）。</summary>
+    public int ShowMenu(int buttonId, IReadOnlyList<PluginCommand> commands, Func<string, string> text)
+    {
+        var menu = Native.CreatePopupMenu();
+        try
+        {
+            if (buttonId == MoreButtonId)
+            {
+                foreach (var key in MoreItems)
+                {
+                    if (key.Length == 0)
+                    {
+                        Native.AppendMenu(menu, Native.MfSeparator, 0, null);
+                        continue;
+                    }
 
-    public bool IsCommonMarkSelected => Native.SendMessage(_mode, CbGetCurSel, 0, 0) == 1;
+                    Native.AppendMenu(menu, Native.MfString, (nuint)(FirstCommandId + IndexOf(commands, key)), text(key));
+                }
+            }
+            else
+            {
+                Native.AppendMenu(menu, Native.MfString, FeaturesMenuId, text("featuresMenu"));
+                Native.AppendMenu(menu, Native.MfString, (nuint)(FirstCommandId + IndexOf(commands, "settings")), text("settings"));
+            }
 
-    /// <summary>状態表示の文字が、指定の幅で必要とする高さを求める（空でも1行分）。</summary>
+            var button = Native.GetDlgItem(_parent, buttonId);
+            Native.GetWindowRect(button, out var rect);
+            return Native.TrackPopupMenu(menu, Native.TpmReturnCmd, rect.Left, rect.Bottom, 0, _parent, 0);
+        }
+        finally
+        {
+            Native.DestroyMenu(menu);
+        }
+    }
+
+    /// <summary>状態表示の文字が、指定の幅で必要とする高さを求める。</summary>
     private int MeasureStatus(int width)
     {
         var hdc = Native.GetDC(_status);
@@ -260,7 +336,7 @@ internal sealed class LegacyToolbar
         var rect = new Rect { Right = Math.Max(1, width) };
         const uint DtWordBreak = 0x10;
         const uint DtCalcRect = 0x400;
-        var height = Native.DrawText(hdc, _statusText.Length > 0 ? _statusText : " ", -1, ref rect, DtWordBreak | DtCalcRect);
+        var height = Native.DrawText(hdc, _statusText, -1, ref rect, DtWordBreak | DtCalcRect);
         Native.SelectObject(hdc, previous);
         Native.ReleaseDC(_status, hdc);
         return height;
@@ -269,28 +345,43 @@ internal sealed class LegacyToolbar
     /// <summary>ボタンを折り返して配置し、使った高さを返す。</summary>
     public int Layout(int width)
     {
-        var scale = Native.GetDpiForWindow(_parent) / 96.0;
+        var scale = Scale;
         var height = (int)(24 * scale);
         var x = Margin;
         var y = Margin;
-        foreach (var (window, buttonWidth, isCombo) in _buttons)
+        for (var i = 0; i < _buttons.Count; i++)
         {
-            if (x + buttonWidth + Margin > width && x > Margin)
+            var button = _buttons[i];
+            var needed = button.Width;
+            if (button.BreakBefore)
+            {
+                // まとまりの残りが同じ行に収まらなければ、まとまりごと次の行へ送る
+                needed = _buttons.Skip(i).Sum(b => b.Width + Margin) - Margin;
+                x += 6;
+            }
+
+            if (x + needed + Margin > width && x > Margin)
             {
                 x = Margin;
                 y += height + Margin;
             }
 
-            Native.MoveWindow(window, x, y, buttonWidth, isCombo ? (int)(ComboDropHeight * scale) : height, 1);
-            x += buttonWidth + Margin;
+            Native.MoveWindow(button.Window, x, y, button.Width, height, 1);
+            x += button.Width + Margin;
         }
 
         y += height + Margin;
+        if (_statusText.Length == 0)
+        {
+            return y;
+        }
 
-        // 状態表示は文字に必要な高さだけを使う
-        var statusWidth = Math.Max(0, width - (Margin * 2));
-        var statusHeight = MeasureStatus(statusWidth);
+        // 一時的な通知は、閉じるボタンの左に文字に必要な高さだけを使う
+        var closeSize = (int)(20 * scale);
+        var statusWidth = Math.Max(0, width - (Margin * 3) - closeSize);
+        var statusHeight = Math.Max(MeasureStatus(statusWidth), closeSize);
         Native.MoveWindow(_status, Margin, y, statusWidth, statusHeight, 1);
+        Native.MoveWindow(_closeStatus, width - Margin - closeSize, y, closeSize, closeSize, 1);
         return y + statusHeight + Margin;
     }
 }
