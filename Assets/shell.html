@@ -125,6 +125,8 @@ let frameReady = false;
 let pending = null;
 let toastTimer = 0;
 let version = '';
+let renderSequence = 0;
+let linkClickedAt = -Infinity;
 
 const $ = id => document.getElementById(id);
 const t = key => strings[key] ?? key;
@@ -137,6 +139,7 @@ function setupFrame() {
     frameReady = true;
     applyTheme();
     frameDoc().addEventListener('click', onFrameClick, true);
+    frameDoc().addEventListener('dblclick', onFrameDoubleClick, true);
     if (pending !== null) { setHtml(pending); pending = null; }
     post('ready');
   });
@@ -148,6 +151,9 @@ function onFrameClick(event) {
   const link = event.target.closest ? event.target.closest('a[href]') : null;
   if (!link) return;
   event.preventDefault();
+  linkClickedAt = event.timeStamp;
+  // ダブルクリックの2回目で外部リンクを重ねて開かない。
+  if (event.detail > 1) return;
   const href = link.getAttribute('href');
   if (href.startsWith('#')) {
     const target = frameDoc().getElementById(decodeURIComponent(href.slice(1)));
@@ -155,6 +161,21 @@ function onFrameClick(event) {
   } else {
     post('openLink', { url: href });
   }
+}
+
+function onFrameDoubleClick(event) {
+  const target = event.target.closest ? event.target : event.target.parentElement;
+  if (!target || event.button !== 0 || event.ctrlKey || event.altKey || event.shiftKey || event.metaKey ||
+      target.closest('a, summary, input, button, select, textarea') ||
+      event.timeStamp - linkClickedAt < 1000 || !Number.isInteger(renderSequence) || renderSequence <= 0) return;
+  const block = target.closest('[data-line]');
+  if (!block) return;
+  const value = block.getAttribute('data-line');
+  if (!/^[0-9]+$/.test(value)) return;
+  const line = Number(value);
+  if (!Number.isSafeInteger(line)) return;
+  event.preventDefault();
+  post('jumpToSource', { line, sequence: renderSequence });
 }
 
 function setHtml(html) {
@@ -183,6 +204,7 @@ function showToast(text) {
 }
 
 function applyStrings(language) {
+  $('frame').title = t('previewNavigationHelp');
   document.querySelectorAll('[data-title]').forEach(el => { el.title = t(el.dataset.title); });
   document.querySelectorAll('[data-label]').forEach(el => { el.textContent = t(el.dataset.label); });
   const heading = $('heading');
@@ -391,6 +413,7 @@ function showSettings(current) {
 
   addHeading(dialog, t('preview'));
   const follow = addCheck(dialog, 'checkbox', 'followCaret', '1', t('followCaret'), current.followCaret);
+  addNote(dialog, t('previewNavigationHelp'));
 
   addHeading(dialog, t('engine'));
   addCheck(dialog, 'radio', 'engine', 'auto', t('engineAuto'), current.engine !== 'ie');
@@ -484,11 +507,13 @@ chrome.webview.addEventListener('message', event => {
       applyTheme();
       break;
     case 'render':
+      renderSequence = message.sequence;
       activeFeatures = message.features;
       renderNotices(message.notices);
       setHtml(message.isEmpty ? '<p class="trellis-empty">' + t('empty').replace(/[<>&]/g, '') + '</p>' : message.html);
       break;
     case 'status':
+      renderSequence = 0;
       renderNotices([{ kind: 'status', text: message.text, action: message.action, command: message.command }]);
       setHtml('');
       break;

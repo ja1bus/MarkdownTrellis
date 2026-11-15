@@ -56,6 +56,15 @@ internal static unsafe class Editor
 
     public static int CurrentLine => (int)Send(Native.SciLineFromPosition, Send(Native.SciGetCurrentPos));
 
+    /// <summary>原文を変更せず、指定行の先頭に移動して入力へ戻る。</summary>
+    public static void GoToLine(int line)
+    {
+        if (line < 0 || line >= Send(Native.SciGetLineCount)) return;
+        Send(Native.SciEnsureVisible, line);
+        Send(Native.SciGotoLine, line);
+        Send(Native.SciGrabFocus);
+    }
+
     /// <summary>
     /// 選択ごとに変換を適用する。全体で1回のUndoにまとめ、後ろの選択から処理して位置のずれを防ぐ。
     /// </summary>

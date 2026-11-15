@@ -112,6 +112,7 @@ public static class Strings
         ["selectionOutside"] = ("Link or footnote definitions outside the selection are not included.", "範囲外にあるリンクや脚注の定義は反映されません。"),
         ["followCaret"] = ("Scroll the preview to the cursor line", "カーソル行へプレビューを追従する"),
         ["followCaretLegacy"] = (" (normal preview only)", "（通常表示で有効）"),
+        ["previewNavigationHelp"] = ("Double-click preview text to move to the start of its source block (normal preview only; links are excluded).", "プレビューの本文をダブルクリックすると、対応する段落などの原文の先頭へ移動します（通常表示のみ。リンク上は対象外）。"),
         ["engine"] = ("Preview engine", "表示エンジン"),
         ["engineAuto"] = ("Automatic (WebView2 first)", "自動（WebView2優先）"),
         ["engineIe"] = ("IE engine", "IEエンジン"),

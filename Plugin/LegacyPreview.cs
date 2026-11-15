@@ -13,12 +13,16 @@ internal sealed unsafe class LegacyPreview
     // 番号はWindows SDKの ExDisp.h、MsHTML.h、OCIdl.h の継承順に基づく（IUnknown、IDispatchを含む）
     private const int BrowserNavigate = 11;
     private const int BrowserGetDocument = 18;
+    private const int BrowserGetLocationUrl = 30;
     private const int BrowserGetReadyState = 56;
     private const int BrowserPutSilent = 60;
     private const int DocumentGetBody = 9;
+    private const int DocumentGetReadyState = 22;
+    private const int ElementGetId = 13;
     private const int ElementPutInnerHtml = 57;
     private const int PersistLoad = 5;
     private const int ReadyStateComplete = 4;
+    private const string InitialUrl = "about:blank#markdowntrellis";
 
     private const string BrowserClsid = "{8856F961-340A-11D0-A96B-00C04FD705A2}";
     private const string Shell = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge\"><style>"
@@ -29,7 +33,7 @@ internal sealed unsafe class LegacyPreview
         + "hr{border:0;border-top:1px solid #ccc;margin:1em 0}ul.contains-task-list{list-style:none;padding-left:1.2em}"
         + ".link{color:#0b63c5;text-decoration:underline}.blocked-image{border:1px dashed #ccc;padding:0 4px;color:#666}"
         + ".markdown-alert{border-left:4px solid #0b63c5;padding:2px 0 2px 12px;margin:0 0 1em}.markdown-alert-title{font-weight:bold}"
-        + "</style></head><body></body></html>";
+        + "</style></head><body id=\"trellis-preview\"></body></html>";
 
     private static readonly Guid IidBrowser = new("D30C1661-CDAF-11D0-8A3E-00C04FC9E26E");
     private static readonly Guid IidDocument = new("332C4425-26CB-11D0-B483-00C04FD90119");
@@ -65,7 +69,7 @@ internal sealed unsafe class LegacyPreview
 
         // スクリプトのエラーなどのダイアログを出さない
         Com.Call(_browser, BrowserPutSilent, -1);
-        var url = Marshal.StringToBSTR("about:blank");
+        var url = Marshal.StringToBSTR(InitialUrl);
         try
         {
             var navigate = (delegate* unmanaged[Stdcall]<nint, nint, nint, nint, nint, nint, int>)Com.Slot(_browser, BrowserNavigate);
@@ -104,6 +108,8 @@ internal sealed unsafe class LegacyPreview
         switch (_stage)
         {
             case Stage.NavigatingBlank:
+                // 作成直後の完了状態を、要求した初期ページの読み込み完了と取り違えない。
+                if (!IsInitialPage()) return;
                 LoadShell();
                 _stage = Stage.LoadingShell;
                 break;
@@ -121,6 +127,13 @@ internal sealed unsafe class LegacyPreview
     }
 
     public bool IsWaiting => _stage != Stage.Ready || _pending is not null;
+
+    private bool IsInitialPage()
+    {
+        if (Com.Get(_browser, BrowserGetLocationUrl, out var url) < 0 || url == 0) return false;
+        try { return Marshal.PtrToStringBSTR(url) == InitialUrl; }
+        finally { Marshal.FreeBSTR(url); }
+    }
 
     private void LoadShell()
     {
@@ -156,8 +169,11 @@ internal sealed unsafe class LegacyPreview
         try
         {
             return Com.QueryInterface(dispatch, IidDocument, out document) >= 0
+                && IsDocumentReady(document)
                 && Com.Get(document, DocumentGetBody, out body) >= 0 && body != 0
                 && Com.QueryInterface(body, IidElement, out element) >= 0
+                // about:blankの完了状態が残っていても、シェルのbodyができるまで書き込まない。
+                && IsShellBody(element)
                 && Com.Call(element, ElementPutInnerHtml, text) >= 0;
         }
         finally
@@ -171,6 +187,21 @@ internal sealed unsafe class LegacyPreview
                 }
             }
         }
+    }
+
+    private static bool IsShellBody(nint element)
+    {
+        if (Com.Get(element, ElementGetId, out var id) < 0 || id == 0) return false;
+        try { return Marshal.PtrToStringBSTR(id) == "trellis-preview"; }
+        finally { Marshal.FreeBSTR(id); }
+    }
+
+    private static bool IsDocumentReady(nint document)
+    {
+        // IPersistStreamInit.LoadはWebBrowserのReadyStateとは別に文書を読み込む。
+        if (Com.Get(document, DocumentGetReadyState, out var state) < 0 || state == 0) return false;
+        try { return Marshal.PtrToStringBSTR(state) == "complete"; }
+        finally { Marshal.FreeBSTR(state); }
     }
 }
 

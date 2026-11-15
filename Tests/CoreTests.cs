@@ -91,6 +91,27 @@ public class RendererTests
 
     [Fact]
     public void Line_numbers_are_added_for_scroll_sync() => Assert.Contains("data-line=\"2\"", Preview("a\n\nb\n"));
+
+    [Theory]
+    [InlineData("# 日本語😀\r\n\r\n段落の**強調**\r\n続く行\r\n", "p", 2)]
+    [InlineData("先頭\n\n## 見出し\n", "h2", 2)]
+    [InlineData("先頭\n\n- 親\n  - 子\n", "li", 3)]
+    [InlineData("先頭\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n", "table", 2)]
+    [InlineData("先頭\n\n```csharp\nvar x = 1;\n```\n", "code", 2)]
+    [InlineData("---\ntitle: x\n---\n\n# 本文\n", "h1", 4)]
+    public void Preview_blocks_point_to_the_source_start_line(string source, string tag, int line)
+    {
+        Assert.Matches($"<{tag}\\b[^>]*\\bdata-line=\"{line}\"", Preview(source));
+    }
+
+    [Fact]
+    public void Excluded_outer_fence_preserves_original_line_numbers_with_frontmatter()
+    {
+        const string source = "```markdown\r\n---\r\ntitle: x\r\n---\r\n\r\n# 日本語😀\r\n\r\n本文\r\n```\r\n";
+        var html = MarkdownRenderer.RenderPreview(new RenderRequest(source, StripOuterFence: true)).Html;
+        Assert.Matches("<h1\\b[^>]*\\bdata-line=\"5\"", html);
+        Assert.Matches("<p\\b[^>]*\\bdata-line=\"7\"", html);
+    }
 }
 
 public class SanitizerTests

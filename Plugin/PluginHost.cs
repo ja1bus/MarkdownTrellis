@@ -26,6 +26,7 @@ internal static unsafe class PluginHost
 
     private const string WindowClass = "MarkdownTrellisPanel";
     private const uint WmRenderDone = Native.WmApp + 1;
+    private const uint WmJumpToSource = Native.WmApp + 2;
     private const nint RenderTimer = 1;
     private const nint CaretTimer = 2;
     private const nint LegacyTimer = 3;
@@ -47,6 +48,9 @@ internal static unsafe class PluginHost
     private static bool _ready;
     private static bool _shellReady;
     private static int _renderSequence;
+    private static int _displayedRenderSequence;
+    private static nint _previewBuffer;
+    private static nint _previewEditor;
     private static readonly Lock RenderGate = new();
     private static int _pendingSequence;
     private static string? _pendingRender;
@@ -256,6 +260,9 @@ internal static unsafe class PluginHost
 
     private static void ScheduleRender(uint delay)
     {
+        // 編集の300ms待ちの間も、古い表示から原文へ移動させない。
+        _displayedRenderSequence = 0;
+        _renderSequence++;
         if (_ready && _panelVisible && _panel != 0)
         {
             Native.SetTimer(_panel, RenderTimer, delay, 0);
@@ -685,6 +692,9 @@ internal static unsafe class PluginHost
                 case WmRenderDone:
                     DeliverRender();
                     return 0;
+                case WmJumpToSource:
+                    JumpToSource((int)wParam, (int)lParam);
+                    return 0;
                 case Native.WmNotify:
                     var header = (NotifyHeader*)lParam;
                     if ((header->Code & 0xFFFF) == Native.DmnClose)
@@ -777,6 +787,9 @@ internal static unsafe class PluginHost
         }
 
         var sequence = ++_renderSequence;
+        _displayedRenderSequence = 0;
+        _previewBuffer = CurrentBuffer;
+        _previewEditor = Editor.Current;
         var state = StateOf(CurrentBuffer);
         var path = CurrentPath();
         // 代替表示には「このファイルをプレビュー」のボタンがないので、すべての文書を表示する
@@ -810,7 +823,7 @@ internal static unsafe class PluginHost
             try
             {
                 var request = new RenderRequest(text, features, strip, extra, host);
-                payload = legacy ? MarkdownRenderer.RenderLegacyPreview(request) : BuildRenderMessage(request, language);
+                payload = legacy ? MarkdownRenderer.RenderLegacyPreview(request) : BuildRenderMessage(request, language, sequence);
             }
             catch (Exception ex)
             {
@@ -838,7 +851,7 @@ internal static unsafe class PluginHost
         });
     }
 
-    private static string BuildRenderMessage(RenderRequest request, string language)
+    private static string BuildRenderMessage(RenderRequest request, string language, int sequence)
     {
         var result = MarkdownRenderer.RenderPreview(request);
         var fence = FenceDetector.Detect(request.Text);
@@ -846,6 +859,7 @@ internal static unsafe class PluginHost
         return Json(w =>
         {
             w.WriteString("type", "render");
+            w.WriteNumber("sequence", sequence);
             w.WriteString("html", result.Html);
             w.WriteBoolean("isEmpty", request.Text.Length == 0);
             w.WriteStartArray("features");
@@ -917,6 +931,7 @@ internal static unsafe class PluginHost
         }
         else if (payload is not null && sequence == _renderSequence)
         {
+            _displayedRenderSequence = sequence;
             _webView?.Post(payload);
             PostCaret();
         }
@@ -940,6 +955,18 @@ internal static unsafe class PluginHost
                 w.WriteNumber("line", line);
             }));
         }
+    }
+
+    private static void JumpToSource(int sequence, int line)
+    {
+        if (_legacy is not null || !_panelVisible || _displayedRenderSequence <= 0 ||
+            sequence != _displayedRenderSequence || sequence != _renderSequence ||
+            _previewBuffer != CurrentBuffer || _previewEditor != Editor.Current ||
+            line < 0 || line >= Editor.Send(Native.SciGetLineCount)) return;
+
+        // この移動を原文→プレビューへ送り返さず、閲覧位置を維持する。
+        _lastCaretLine = line;
+        Editor.GoToLine(line);
     }
 
     private static void PostStatus(string textKey, string actionKey, string command)
@@ -1017,6 +1044,15 @@ internal static unsafe class PluginHost
 
         switch (command)
         {
+            case "jumpToSource":
+                if (root.TryGetProperty("sequence", out var sequenceValue) && sequenceValue.ValueKind == JsonValueKind.Number && sequenceValue.TryGetInt32(out var sequence) &&
+                    root.TryGetProperty("line", out var lineValue) && lineValue.ValueKind == JsonValueKind.Number && lineValue.TryGetInt32(out var line))
+                {
+                    // WebView2のコールバックを抜けてから移動し、ブラウザーにフォーカスを戻させない。
+                    Native.PostMessage(_panel, WmJumpToSource, sequence, line);
+                }
+
+                break;
             case "ready":
                 _shellReady = true;
                 PostInit();

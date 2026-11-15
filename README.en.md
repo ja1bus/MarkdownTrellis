@@ -7,6 +7,7 @@ MarkdownTrellis is a Notepad++ plugin that makes Markdown easier to edit. It add
 ## Features
 
 - Preview: updates as you type and appears in a Notepad++ docking panel.
+- Go to source: double-click preview text to move the editor cursor to the start of the matching block (normal preview only; links are excluded).
 - Formatting buttons: bold, italic, strikethrough, inline code, headings, bulleted list, numbered list, checklist, quote, code block, table, link, image, horizontal rule
 - Copy Source: copies the whole document exactly as written, including unsaved changes.
 - Copy Formatted: copies the preview with its formatting. Paste it into Teams, an email, and so on to keep headings, tables, bold text, and links.

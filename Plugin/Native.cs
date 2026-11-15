@@ -169,16 +169,19 @@ internal static partial class Native
     // Scintilla
     public const uint SciGetLength = 2006;
     public const uint SciGetCurrentPos = 2008;
+    public const uint SciGotoLine = 2024;
     public const uint SciGetEolMode = 2030;
     public const uint SciBeginUndoAction = 2078;
     public const uint SciEndUndoAction = 2079;
     public const uint SciGetCodePage = 2137;
     public const uint SciGetReadOnly = 2140;
+    public const uint SciGetLineCount = 2154;
     public const uint SciSetSel = 2160;
     public const uint SciLineFromPosition = 2166;
     public const uint SciSetTargetStart = 2190;
     public const uint SciSetTargetEnd = 2192;
     public const uint SciReplaceTarget = 2194;
+    public const uint SciEnsureVisible = 2232;
     public const uint SciSelectionIsRectangle = 2372;
     public const uint SciGrabFocus = 2400;
     public const uint SciGetCharacterPointer = 2520;
