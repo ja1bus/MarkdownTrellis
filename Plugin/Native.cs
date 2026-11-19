@@ -148,6 +148,7 @@ internal static partial class Native
     public const uint NppmGetFullPathFromBufferId = NppMsg + 58;
     public const uint NppmGetCurrentBufferId = NppMsg + 60;
     public const uint NppmIsDarkModeEnabled = NppMsg + 107;
+    public const uint NppmDoOpen = NppMsg + 77;
 
     public const uint NppmAddToolbarIconForDarkMode = NppMsg + 101;
 
@@ -169,6 +170,11 @@ internal static partial class Native
     // Scintilla
     public const uint SciGetLength = 2006;
     public const uint SciGetCurrentPos = 2008;
+    public const uint SciGetAnchor = 2009;
+    public const uint SciGetLineEndPosition = 2136;
+    public const uint SciPositionFromLine = 2167;
+    public const uint SciSetSelectionNCaret = 2576;
+    public const uint SciSetSelectionNAnchor = 2578;
     public const uint SciGotoLine = 2024;
     public const uint SciGetEolMode = 2030;
     public const uint SciBeginUndoAction = 2078;
@@ -188,6 +194,25 @@ internal static partial class Native
     public const uint SciGetSelections = 2570;
     public const uint SciGetSelectionNStart = 2585;
     public const uint SciGetSelectionNEnd = 2587;
+    public const uint SciGetSelectionMode = 2423;
+    public const uint SciSetMainSelection = 2574;
+    public const uint SciGetMainSelection = 2575;
+    public const uint SciGetSelectionNCaret = 2577;
+    public const uint SciGetSelectionNAnchor = 2579;
+    public const uint SciSetSelectionNCaretVirtualSpace = 2580;
+    public const uint SciGetSelectionNCaretVirtualSpace = 2581;
+    public const uint SciSetSelectionNAnchorVirtualSpace = 2582;
+    public const uint SciGetSelectionNAnchorVirtualSpace = 2583;
+    public const uint SciSetRectangularSelectionCaret = 2588;
+    public const uint SciGetRectangularSelectionCaret = 2589;
+    public const uint SciSetRectangularSelectionAnchor = 2590;
+    public const uint SciGetRectangularSelectionAnchor = 2591;
+    public const uint SciSetRectangularSelectionCaretVirtualSpace = 2592;
+    public const uint SciGetRectangularSelectionCaretVirtualSpace = 2593;
+    public const uint SciSetRectangularSelectionAnchorVirtualSpace = 2594;
+    public const uint SciGetRectangularSelectionAnchorVirtualSpace = 2595;
+    public const int ScSelRectangle = 1;
+    public const int ScSelThin = 3;
     public const uint ScnUpdateUi = 2007;
     public const uint ScnModified = 2008;
     public const int ScModInsertText = 1;
@@ -202,6 +227,17 @@ internal static partial class Native
     public const uint TpmReturnCmd = 0x100;
     public const uint GmemMoveable = 2;
     public const uint CfUnicodeText = 13;
+    public const uint CfDib = 8;
+
+    [LibraryImport("user32")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static partial bool IsClipboardFormatAvailable(uint format);
+
+    [LibraryImport("user32")]
+    public static partial nint GetClipboardData(uint format);
+
+    [LibraryImport("kernel32")]
+    public static partial nuint GlobalSize(nint handle);
     public const int VkControl = 0x11;
 
     [LibraryImport("user32", EntryPoint = "SendMessageW")]

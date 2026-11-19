@@ -26,10 +26,15 @@ public sealed class ProtectedRanges
     {
     }
 
-    public static ProtectedRanges Find(string text)
+    public static ProtectedRanges Find(string text) => Find(Markdown.Parse(text, Pipeline), text);
+
+    /// <summary>
+    /// 解析済みの文書から求める（プレビューの解析を共用する）。文書は text をそのまま解析し、
+    /// 正確なソース位置（UsePreciseSourceLocation）を持つものに限る。
+    /// </summary>
+    public static ProtectedRanges Find(MarkdownDocument document, string text)
     {
         var result = new ProtectedRanges();
-        var document = Markdown.Parse(text, Pipeline);
 
         // Frontmatterのブロックも CodeBlock の派生なのでここに含まれる
         foreach (var block in document.Descendants<CodeBlock>())
@@ -139,10 +144,16 @@ public sealed record DetectedSyntax(SyntaxFeature Feature, int Count);
 /// <summary>追加構文の候補を根拠の件数とともに検出する。方言名は断定しない。</summary>
 public static partial class SyntaxDetector
 {
-    public static IReadOnlyList<DetectedSyntax> Detect(string text, SyntaxFeature active = SyntaxFeature.None)
+    public static IReadOnlyList<DetectedSyntax> Detect(string text, SyntaxFeature active = SyntaxFeature.None) =>
+        Detect(ProtectedRanges.Find(text), text, active);
+
+    /// <summary>プレビューで解析した文書を共用して検出する（全文をもう一度解析しない）。</summary>
+    public static IReadOnlyList<DetectedSyntax> Detect(MarkdownDocument document, string text, SyntaxFeature active = SyntaxFeature.None) =>
+        Detect(ProtectedRanges.Find(document, text), text, active);
+
+    private static IReadOnlyList<DetectedSyntax> Detect(ProtectedRanges ranges, string text, SyntaxFeature active)
     {
         var counts = new Dictionary<SyntaxFeature, int>();
-        var ranges = ProtectedRanges.Find(text);
         foreach (var line in LineSplitter.Split(text))
         {
             Count(counts, SyntaxFeature.Alerts, AlertRegex(), line, ranges);

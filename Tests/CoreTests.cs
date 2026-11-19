@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using MarkdownTrellis.Core;
 using Xunit;
 
@@ -175,10 +176,16 @@ public class SanitizerTests
     }
 
     [Fact]
-    public void Text_inputs_are_not_allowed_and_checkboxes_are_disabled()
+    public void Text_inputs_are_not_allowed_and_checkboxes_are_disabled_unless_interactive()
     {
         Assert.Contains("&lt;input", Run("<input type=\"text\">").Html);
         Assert.Contains("disabled", Run("<input type=\"checkbox\">").Html);
+
+        // 通常表示のプレビューだけは操作できる（クリックはパネル側で取り消す）。text は許可しないまま
+        var interactive = new SanitizeOptions(InteractiveCheckboxes: true);
+        Assert.DoesNotContain("disabled", HtmlSanitizer.Sanitize("<input type=\"checkbox\" disabled checked>", interactive).Html);
+        Assert.Contains("checked", HtmlSanitizer.Sanitize("<input type=\"checkbox\" disabled checked>", interactive).Html);
+        Assert.Contains("&lt;input", HtmlSanitizer.Sanitize("<input type=\"text\">", interactive).Html);
     }
 
     [Fact]
@@ -872,5 +879,595 @@ public class SettingsTests
         var result = MarkdownRenderer.RenderForCopy(new RenderRequest(Fragment, StripOuterFence: false));
         Assert.Contains("<table", result.Html);
         Assert.Contains("<del>", result.Html);
+    }
+}
+
+/// <summary>0.14.0の機能追加（F1〜F8）とレビュー指摘の修正（R1〜R7）。</summary>
+public class Release014Tests
+{
+    private static string Apply(string text, TextEdit edit) => text[..edit.Start] + edit.Replacement + text[(edit.Start + edit.Length)..];
+
+    private static string Preview(string text, SyntaxFeature features = SyntaxFeature.None, string? host = null) =>
+        MarkdownRenderer.RenderPreview(new RenderRequest(text, features, ImageHost: host)).Html;
+
+    // --- F2 チェックボックス ---
+
+    [Theory]
+    [InlineData("- [ ] a", "- [x] a")]
+    [InlineData("* [x] b", "* [ ] b")]
+    [InlineData("+ [X] c", "+ [ ] c")]
+    [InlineData("1. [ ] d", "1. [x] d")]
+    [InlineData("12) [x] e", "12) [ ] e")]
+    [InlineData("  - [ ] f", "  - [x] f")]
+    [InlineData("-\t[ ] g", "-\t[x] g")]
+    [InlineData("123456789. [ ] h", "123456789. [x] h")]
+    [InlineData("- [ ]", "- [x]")]
+    public void Task_mark_toggles_one_character(string line, string expected)
+    {
+        var toggled = TextFormatter.ToggleTaskMark(line);
+        Assert.Equal(expected, toggled);
+        Assert.Equal(1, line.Zip(toggled!).Count(p => p.First != p.Second));
+    }
+
+    [Theory]
+    [InlineData("1234567890. [ ] i")]
+    [InlineData("> - [ ] j")]
+    [InlineData("-[ ] k")]
+    [InlineData("- [y] l")]
+    [InlineData("本文 [ ] m")]
+    public void Non_task_lines_are_not_toggled(string line) => Assert.Null(TextFormatter.ToggleTaskMark(line));
+
+    [Fact]
+    public void Preview_checkboxes_are_clickable_but_legacy_and_copy_are_disabled()
+    {
+        const string Text = "- [ ] a\n- [x] b\n";
+        var preview = Preview(Text);
+        Assert.Equal(2, Regex.Matches(preview, "type=\"checkbox\"").Count);
+        Assert.DoesNotContain("disabled", preview);
+        Assert.Matches("<li[^>]*data-line=\"0\"[^>]*>\\s*<input[^>]*type=\"checkbox\"", preview);
+        Assert.Matches("<li[^>]*data-line=\"1\"[^>]*>\\s*<input[^>]*checked", preview);
+
+        var legacy = MarkdownRenderer.RenderLegacyPreview(new RenderRequest(Text));
+        Assert.Equal(2, Regex.Matches(legacy, "disabled").Count);
+        Assert.DoesNotContain("<input", MarkdownRenderer.RenderForCopy(new RenderRequest(Text)).Html);
+    }
+
+    // --- F3 見出しのシフト ---
+
+    private const string HeadingDocument = "---\n# yaml\n---\n# A\n## B\n###### F\n   ### S3\n    #### S4\n#tag\n####### G7\n> # Q\n- # L\nSetext\n===\n```\n# C\n```\n~~~\n## U\n";
+
+    [Fact]
+    public void Headings_are_promoted_outside_code_and_frontmatter()
+    {
+        var edit = TextFormatter.ShiftHeadings(HeadingDocument, 0, 0, -1)!;
+        var result = Apply(HeadingDocument, edit);
+        Assert.Equal(HeadingDocument.Replace("## B", "# B").Replace("###### F", "##### F").Replace("   ### S3", "   ## S3"), result);
+    }
+
+    [Fact]
+    public void Headings_are_demoted_and_crlf_is_kept()
+    {
+        var crlf = HeadingDocument.Replace("\n", "\r\n");
+        var result = Apply(crlf, TextFormatter.ShiftHeadings(crlf, 0, 0, 1)!);
+        Assert.Equal(crlf.Replace("# A\r", "## A\r").Replace("## B", "### B").Replace("   ### S3", "   #### S3"), result);
+    }
+
+    [Fact]
+    public void Heading_shift_without_change_is_null()
+    {
+        Assert.Null(TextFormatter.ShiftHeadings("# A\n", 0, 0, -1));
+        Assert.Null(TextFormatter.ShiftHeadings("###### F\n", 0, 0, 1));
+        Assert.Null(TextFormatter.ShiftHeadings("text\n", 0, 0, 1));
+
+        // 1行目が --- でなければFrontmatterではない
+        Assert.Equal("\n---\n## x\n---\n", Apply("\n---\n# x\n---\n", TextFormatter.ShiftHeadings("\n---\n# x\n---\n", 0, 0, 1)!));
+    }
+
+    [Fact]
+    public void Heading_shift_on_selection_keeps_the_selection_on_the_same_characters()
+    {
+        const string Text = "# A\n## B\n### C\n#### D";
+        var anchor = Text.IndexOf('B');
+        var caret = Text.IndexOf('C') + 1;
+        var edit = TextFormatter.ShiftHeadings(Text, anchor, caret, 1)!;
+        var result = Apply(Text, edit);
+        Assert.Equal("# A\n### B\n#### C\n#### D", result);
+        Assert.Equal('B', result[edit.SelectionStart]);
+        Assert.Equal('C', result[edit.SelectionEnd - 1]);
+    }
+
+    // --- F4 表の整形 ---
+
+    private static string Format(string text, int caret, string eol = "\n")
+    {
+        var edit = TextFormatter.FormatTable(text, caret, caret, eol);
+        Assert.NotNull(edit);
+        return Apply(text, edit!);
+    }
+
+    [Fact]
+    public void Table_columns_are_aligned_with_wide_characters_counted_as_two()
+    {
+        const string Text = "|名前|説明|\n|---|---|\n|りんご|赤い果物|\n|a|b|";
+        var edit = TextFormatter.FormatTable(Text, Text.IndexOf("果物", StringComparison.Ordinal), Text.IndexOf("果物", StringComparison.Ordinal), "\n")!;
+        var result = Apply(Text, edit);
+        Assert.Equal("| 名前   | 説明     |\n| ------ | -------- |\n| りんご | 赤い果物 |\n| a      | b        |", result);
+        Assert.Equal("赤い果物", result.Substring(edit.SelectionStart, 4));
+        Assert.Equal("| 名前   | 説明     |\r\n| ------ | -------- |\r\n| りんご | 赤い果物 |\r\n| a      | b        |", Format(Text, 1, "\r\n"));
+    }
+
+    [Fact]
+    public void Table_alignment_escapes_and_code_spans_are_kept()
+    {
+        Assert.Equal(
+            "| 左       | 中央   | 右   | なし |\n| :------- | :----: | ---: | ---- |\n| あいうえ | x      | 1    | 2    |\n| abcd     | abcdef | abcd | abcd |",
+            Format("|左|中央|右|なし|\n|:---|:---:|---:|---|\n|あいうえ|x|1|2|\n|abcd|abcdef|abcd|abcd|", 1));
+        var code = Format("|列1|列2|\n|---|---|\n|a \\| b|`x|y`|", 1);
+        Assert.EndsWith("| a \\| b | `x|y` |", code);
+    }
+
+    [Fact]
+    public void Table_cells_are_filled_or_kept_and_indent_is_preserved()
+    {
+        Assert.Equal("| aaa | bbb | ccc |\n| --- | --- | --- |\n| 1   |     |     |\n| 1   | 2   | 3   | 4 |", Format("|aaa|bbb|ccc|\n|---|---|---|\n|1|\n|1|2|3|4|", 1));
+        Assert.Equal("  | 項目 | 数値 |\n  | ---- | ---- |\n  | 1    | 23   |", Format("  |項目|数値|\n  |---|---|\n  |1|23|", 3));
+        Assert.Equal("| name | value |\n| ---- | ----- |\n| x    | 10    |", Format("name | value\n--- | ---\nx | 10", 0));
+    }
+
+    [Fact]
+    public void Formatted_table_returns_an_empty_edit()
+    {
+        const string Text = "| a   | b   |\n| --- | --- |\n| 1   | 2   |";
+        var edit = TextFormatter.FormatTable(Text, 2, 2, "\n")!;
+        Assert.Equal(0, edit.Length);
+        Assert.Equal(string.Empty, edit.Replacement);
+    }
+
+    [Theory]
+    [InlineData("|a|b|\n|---|---|---|\n|1|2|", 0)]
+    [InlineData("|a|b|\n|1|2|", 7)]
+    [InlineData("a|b\n|h|i|\n|---|---|\n|1|2|", 0)]
+    [InlineData("```\n|a|b|\n|---|---|\n|1|2|\n```", 5)]
+    [InlineData("---\n|a|b|\n|---|---|\n---", 5)]
+    [InlineData("> |a|b|\n> |---|---|\n> |1|2|", 0)]
+    [InlineData("|a|b|\n|---|---|\n\n本文", 18)]
+    public void Non_tables_are_not_formatted(string text, int caret) => Assert.Null(TextFormatter.FormatTable(text, caret, caret, "\n"));
+
+    [Fact]
+    public void Display_width_counts_fullwidth_and_wide_as_two()
+    {
+        Assert.Equal(2, DisplayWidth.Of("Ａ"));
+        Assert.Equal(2, DisplayWidth.Of("😀"));
+        Assert.Equal(2, DisplayWidth.Of("한"));
+        Assert.Equal(2, DisplayWidth.Of("e\u0301"));
+        Assert.Equal(1, DisplayWidth.Of("①"));
+        Assert.Equal(1, DisplayWidth.Of("ｱ"));
+    }
+
+    // --- F5 画像の貼り付け ---
+
+    [Fact]
+    public void Pasted_image_names_are_dated_unique_and_validated()
+    {
+        var now = new DateTime(2026, 11, 19, 9, 5, 3);
+        Assert.Equal("メモ-20261119-090503.png", PastedImage.DefaultName("C:\\t\\doc\\メモ.md", now));
+        Assert.Equal("my note-20261119-090503.png", PastedImage.DefaultName("C:\\t\\doc\\my note.markdown", now));
+
+        HashSet<string> existing = [];
+        Assert.Equal("x.png", PastedImage.MakeUnique("x.png", existing.Contains));
+        existing.Add("x.png");
+        Assert.Equal("x-2.png", PastedImage.MakeUnique("x.png", existing.Contains));
+        existing.Add("x-2.png");
+        Assert.Equal("x-3.png", PastedImage.MakeUnique("x.png", existing.Contains));
+
+        Assert.Equal("photo.png", PastedImage.Validate("photo"));
+        Assert.Equal("photo.png", PastedImage.Validate("photo.png"));
+        Assert.Equal("photo.PNG", PastedImage.Validate("photo.PNG"));
+        Assert.Equal("photo.jpg.png", PastedImage.Validate("photo.jpg"));
+        Assert.Equal("写真 1.png", PastedImage.Validate("写真 1"));
+        Assert.Equal("my.image.png", PastedImage.Validate("my.image"));
+        foreach (var bad in new[] { "a/b", "a\\b", "a:b", "a*b", "a?b", "a\"b", "a<b", "a>b", "a|b", "a\tb", "CON", "nul", "COM1", "CON.png", "name ", "name.", ".", "..", "", "  " })
+        {
+            Assert.Null(PastedImage.Validate(bad));
+        }
+
+        Assert.Equal("images/x.png", PastedImage.RelativeUrl("x.png"));
+        Assert.Equal("![代替](images/x.png)", TextFormatter.InsertLink(string.Empty, 0, 0, "代替", "images/x.png", true).Replacement);
+        Assert.Equal("![代替](<images/写真 1.png>)", TextFormatter.InsertLink(string.Empty, 0, 0, "代替", "images/写真 1.png", true).Replacement);
+    }
+
+    // --- F6 相対リンクの .md ---
+
+    [Theory]
+    [InlineData("other.md", "C:\\t\\doc\\other.md")]
+    [InlineData("other.md#節", "C:\\t\\doc\\other.md")]
+    [InlineData("other.md?x=1#a", "C:\\t\\doc\\other.md")]
+    [InlineData("sub/../other.md", "C:\\t\\doc\\other.md")]
+    [InlineData("sub/third.markdown", "C:\\t\\doc\\sub\\third.markdown")]
+    [InlineData("a.mdown", "C:\\t\\doc\\a.mdown")]
+    [InlineData("a.mkd", "C:\\t\\doc\\a.mkd")]
+    [InlineData("OTHER.MD", "C:\\t\\doc\\OTHER.MD")]
+    [InlineData("other%20file.md", "C:\\t\\doc\\other file.md")]
+    [InlineData("%E7%AF%80.md", "C:\\t\\doc\\節.md")]
+    public void Relative_markdown_links_resolve_inside_the_folder(string href, string expected) =>
+        Assert.Equal(expected, HtmlSanitizer.ResolveLinkPath("C:\\t\\doc", href));
+
+    [Theory]
+    [InlineData("../other.md")]
+    [InlineData("sub/../../other.md")]
+    [InlineData("%2E%2E/other.md")]
+    [InlineData("%5C..%5Cother.md")]
+    [InlineData("/other.md")]
+    [InlineData("\\other.md")]
+    [InlineData("C:/t/doc/other.md")]
+    [InlineData("file:///C:/t/doc/other.md")]
+    [InlineData("https://example.com/a.md")]
+    [InlineData("other.txt")]
+    [InlineData("other.md.exe")]
+    [InlineData("#節")]
+    [InlineData("")]
+    public void Other_links_are_not_opened(string href) => Assert.Null(HtmlSanitizer.ResolveLinkPath("C:\\t\\doc", href));
+
+    // --- F7 HTMLをコピー ---
+
+    [Fact]
+    public void Copy_html_text_is_the_inline_styled_fragment()
+    {
+        const string Text = "---\ntitle: t\n---\n# 見出し\n\n![ローカル](a.png) ![外部](https://example.com/c.png)\n\n- [ ] 未\n- [x] 済\n\n|a|b|\n|---|---|\n|1|2|\n";
+        var result = MarkdownRenderer.RenderForCopy(new RenderRequest(Text));
+        Assert.DoesNotContain("<style", result.Html);
+        Assert.DoesNotContain("title: t", result.Html);
+        Assert.DoesNotContain("<input", result.Html);
+        Assert.Contains("☐", result.Html);
+        Assert.Contains("☑", result.Html);
+        Assert.Contains("<td style=", result.Html);
+        Assert.Equal(1, result.LocalImages);
+        Assert.Contains("https://example.com/c.png", result.Html);
+    }
+
+    // --- F8 文字数 ---
+
+    [Theory]
+    [InlineData("", 0, 0, 0)]
+    [InlineData("a", 1, 1, 1)]
+    [InlineData("a\n", 1, 2, 1)]
+    [InlineData("a\r\nb", 2, 2, 2)]
+    [InlineData("a\rb", 2, 2, 2)]
+    [InlineData("\r\n", 0, 2, 0)]
+    [InlineData("x\n\ny", 2, 3, 2)]
+    [InlineData("hello world", 11, 1, 2)]
+    [InlineData("don't", 5, 1, 2)]
+    [InlineData("a-b c_d", 7, 1, 4)]
+    [InlineData(" \t ", 3, 1, 0)]
+    [InlineData("日本語です", 5, 1, 5)]
+    [InlineData("Hello世界", 7, 1, 3)]
+    [InlineData("東京2025年", 7, 1, 4)]
+    [InlineData("한국어", 3, 1, 3)]
+    [InlineData("ｱｲｳ", 3, 1, 3)]
+    [InlineData("々〆〇", 3, 1, 3)]
+    [InlineData("１２３", 3, 1, 1)]
+    [InlineData("e\u0301te", 4, 1, 1)]
+    [InlineData("😀 ok", 4, 1, 1)]
+    public void Text_stats_count_characters_lines_and_words(string text, int characters, int lines, int words) =>
+        Assert.Equal(new TextCounts(characters, lines, words), TextStats.Count(text));
+
+    // --- R1 解析の共用 ---
+
+    [Theory]
+    [InlineData("a[^1]\n\n```\n[^2] ==x==\n```\n\n> [!NOTE]\n> n\n\n`[[w]]` [[w]] ==h==\n\n:::note\nx\n:::\n\n---\n\nTerm\n: def\n", SyntaxFeature.None)]
+    [InlineData("---\ntitle: '[^1]'\n---\n\n$$\n:::note\n$$\n\n\\(x\\) [^1]\n", SyntaxFeature.None)]
+    [InlineData("a[^1] ==h==\n\n~~~\n==x==\n", SyntaxFeature.Footnotes)]
+    public void Shared_parse_detects_the_same_syntax(string text, SyntaxFeature active)
+    {
+        var result = MarkdownRenderer.RenderPreview(new RenderRequest(text, active));
+        Assert.NotNull(result.Document);
+        Assert.Equal(SyntaxDetector.Detect(text, active), SyntaxDetector.Detect(result.Document!, text, active));
+    }
+
+    [Fact]
+    public void Shared_parse_with_math_ignores_syntax_inside_display_math()
+    {
+        const string Text = "$$\n:::note\n$$\n";
+        var result = MarkdownRenderer.RenderPreview(new RenderRequest(Text, SyntaxFeature.Math));
+        Assert.Empty(SyntaxDetector.Detect(result.Document!, Text, SyntaxFeature.Math));
+    }
+
+    [Fact]
+    public void Stripped_outer_fence_does_not_share_the_parse()
+    {
+        var result = MarkdownRenderer.RenderPreview(new RenderRequest("```markdown\n# a\n```\n", StripOuterFence: true));
+        Assert.Null(result.Document);
+    }
+
+    // --- R3 設定 ---
+
+    [Theory]
+    [InlineData("\"Alerts, Footnotes\"", SyntaxFeature.Alerts | SyntaxFeature.Footnotes)]
+    [InlineData("\"alerts,FOOTNOTES\"", SyntaxFeature.Alerts | SyntaxFeature.Footnotes)]
+    [InlineData("[\"Alerts\", \"Footnotes\"]", SyntaxFeature.Alerts | SyntaxFeature.Footnotes)]
+    [InlineData("\"Alerts, Bogus\"", SyntaxFeature.Alerts)]
+    [InlineData("[\"Footnotes\", 3, true, \"Bogus\"]", SyntaxFeature.Footnotes)]
+    [InlineData("5", SyntaxFeature.None)]
+    [InlineData("true", SyntaxFeature.None)]
+    [InlineData("{}", SyntaxFeature.None)]
+    [InlineData("null", SyntaxFeature.None)]
+    [InlineData("\"\"", SyntaxFeature.None)]
+    [InlineData("\"None\"", SyntaxFeature.None)]
+    [InlineData("\"Bogus\"", SyntaxFeature.None)]
+    public void Unknown_default_features_do_not_reset_other_settings(string value, SyntaxFeature expected)
+    {
+        var json = "{\"Language\": \"ja\", \"DefaultFeatures\": " + value + ", \"PreviewEngine\": \"ie\", \"PanelVisible\": true, \"FollowCaret\": false, \"ExtraHtmlTags\": [\"u\"]}";
+        var settings = AppSettings.FromJson(json);
+        Assert.Equal(expected, settings.DefaultFeatures);
+        Assert.Equal("ja", settings.Language);
+        Assert.Equal("ie", settings.PreviewEngine);
+        Assert.True(settings.PanelVisible);
+        Assert.False(settings.FollowCaret);
+        Assert.Equal(["u"], settings.ExtraHtmlTags);
+    }
+
+    [Fact]
+    public void Default_features_are_written_in_the_old_form()
+    {
+        Assert.Contains("\"DefaultFeatures\": \"Alerts, Footnotes\"", AppSettings.ToJson(new AppSettings { DefaultFeatures = SyntaxFeature.Alerts | SyntaxFeature.Footnotes }));
+        Assert.Contains("\"DefaultFeatures\": \"None\"", AppSettings.ToJson(new AppSettings()));
+    }
+
+    // --- R5 脚注と data-line の順 ---
+
+    [Fact]
+    public void Footnote_definitions_in_the_middle_are_rendered_at_the_end()
+    {
+        // 前提の文書化: 脚注の定義（2行目）は末尾の div.footnotes に出るため、data-line は文書順に増えない。
+        // shell.html の scrollToLine は打ち切らずに全体から選び、.footnotes を除く。
+        var html = Preview("本文1[^1]\n\n[^1]: 定義\n\n段落4\n", SyntaxFeature.Footnotes);
+        var lines = Regex.Matches(html, "data-line=\"(\\d+)\"").Select(m => int.Parse(m.Groups[1].Value)).ToList();
+        Assert.Equal([0, 4, 2], lines);
+        Assert.True(html.IndexOf("class=\"footnotes\"", StringComparison.Ordinal) < html.LastIndexOf("data-line=\"2\"", StringComparison.Ordinal));
+    }
+
+    // --- R6 生HTMLの data-line ---
+
+    [Fact]
+    public void Raw_html_data_line_attributes_are_removed()
+    {
+        const string Text = "# 本物\n\n<div data-line=\"30\">偽ブロック</div>\n\n<h2 data-line=\"0\">偽見出し</h2>\n\n本文 <span data-line=\"30\">偽インライン</span>\n\n<DIV DATA-LINE='30'>大文字</DIV>\n\n<div\ndata-line=\"7\" class=\"x\">改行</div>\n\n`<div data-line=\"1\">`\n\n```\n<div data-line=\"2\">\n```\n";
+        var html = Preview(Text);
+        Assert.Matches("<h1[^>]*data-line=\"0\"", html);
+        Assert.DoesNotContain("data-line=\"30\"", html);
+        Assert.DoesNotContain("data-line=\"7\"", html);
+        Assert.DoesNotMatch("<h2[^>]*data-line", html);
+        Assert.Contains("偽ブロック", html);
+        Assert.Contains("class=\"x\"", html);
+        Assert.Contains("&lt;div data-line=&quot;1&quot;&gt;", html);
+        Assert.Contains("&lt;div data-line=&quot;2&quot;&gt;", html);
+    }
+
+    [Fact]
+    public void Text_outside_tags_is_not_changed_when_removing_data_line() =>
+        Assert.Equal("<p class=\"a\">use data-line=\"1\" here</p>", MarkdownRenderer.StripLineAttributes("<p class=\"a\" data-line=\"3\">use data-line=\"1\" here</p>"));
+
+    // --- 0.14.0 コードレビュー（code-review-20261119.md）の回帰確認 ---
+
+    [Theory]
+    [InlineData(new byte[] { 0x61, 0x20, 0xF0, 0x9F, 0x98, 0x20, 0x62 }, 65001, false)] // 4バイト文字の途中で終わる（置き換え文字と同じ3バイト）
+    [InlineData(new byte[] { 0x0A, 0xF0, 0x9F, 0x98 }, 65001, false)]
+    [InlineData(new byte[] { 0xC0, 0xAF }, 65001, false)] // 過剰な長さの符号
+    [InlineData(new byte[] { 0xEF, 0xBF, 0xBD }, 65001, true)] // 正当なU+FFFD
+    [InlineData(new byte[] { 0xF0, 0x9F, 0x98, 0x80, 0x61 }, 65001, true)] // 絵文字
+    [InlineData(new byte[] { 0x81, 0x30, 0x61 }, 932, false)] // CP932の不正な2バイト目
+    [InlineData(new byte[] { 0x95, 0x5C, 0x8E, 0xA6 }, 932, true)] // CP932の「表示」
+    [InlineData(new byte[] { 0x82 }, 932, false)] // 2バイト文字の途中で終わる
+    public void R1_encoding_check_rejects_invalid_bytes_with_the_same_length(byte[] bytes, int codePage, bool expected)
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        var encoding = codePage == 65001 ? new UTF8Encoding(false) : Encoding.GetEncoding(codePage);
+        Assert.Equal(expected, EncodingCheck.RoundTrips(bytes, encoding));
+    }
+
+    private static byte[] Dib(int width, int height, int bitCount, int compression = 0, int headerSize = 40, int colorsUsed = 0, byte[]? extra = null, int? pixelBytes = null)
+    {
+        var stride = ((width * bitCount) + 31) / 32 * 4;
+        var colors = bitCount <= 8 ? (colorsUsed == 0 ? 1 << bitCount : colorsUsed) : colorsUsed;
+        var masks = compression == DibLayout.BiBitFields && headerSize == 40 ? 12 : 0;
+        var header = new byte[headerSize];
+        BitConverter.GetBytes(headerSize).CopyTo(header, 0);
+        BitConverter.GetBytes(width).CopyTo(header, 4);
+        BitConverter.GetBytes(height).CopyTo(header, 8);
+        BitConverter.GetBytes((ushort)1).CopyTo(header, 12);
+        BitConverter.GetBytes((ushort)bitCount).CopyTo(header, 14);
+        BitConverter.GetBytes(compression).CopyTo(header, 16);
+        BitConverter.GetBytes(colorsUsed).CopyTo(header, 32);
+        extra?.CopyTo(header, 40);
+        return [.. header, .. new byte[masks + (colors * 4)], .. new byte[pixelBytes ?? stride * Math.Abs(height)]];
+    }
+
+    [Fact]
+    public void R2_dib_layout_accepts_complete_bitmaps()
+    {
+        var bottomUp = DibLayout.Parse(Dib(3, 2, 24))!;
+        Assert.Equal(40, bottomUp.BitsOffset);
+        Assert.Equal(12, bottomUp.Stride);
+        Assert.False(bottomUp.TopDown);
+        Assert.True(DibLayout.Parse(Dib(3, -2, 24))!.TopDown);
+
+        var indexed = DibLayout.Parse(Dib(5, 3, 8, colorsUsed: 4))!;
+        Assert.Equal(40 + 16, indexed.BitsOffset);
+        Assert.Equal(40 + 1024, DibLayout.Parse(Dib(5, 3, 8))!.BitsOffset);
+        Assert.Equal(40 + 12, DibLayout.Parse(Dib(2, 2, 32, DibLayout.BiBitFields))!.BitsOffset);
+
+        var masks = new byte[16];
+        BitConverter.GetBytes(0x00FF0000u).CopyTo(masks, 0);
+        BitConverter.GetBytes(0x0000FF00u).CopyTo(masks, 4);
+        BitConverter.GetBytes(0x000000FFu).CopyTo(masks, 8);
+        BitConverter.GetBytes(0xFF000000u).CopyTo(masks, 12);
+        var v5 = DibLayout.Parse(Dib(1, 2, 32, DibLayout.BiBitFields, 124, extra: masks))!;
+        Assert.Equal(124, v5.BitsOffset);
+        Assert.True(v5.HasAlpha);
+        Assert.False(DibLayout.Parse(Dib(1, 2, 32))!.HasAlpha);
+    }
+
+    [Fact]
+    public void R2_dib_layout_rejects_truncated_or_unsupported_bitmaps()
+    {
+        var full = Dib(3, 2, 24);
+        Assert.Null(DibLayout.Parse(full.AsSpan(0, full.Length - 1))); // 最終走査行の一部が欠けた
+        var indexed = Dib(5, 3, 8);
+        Assert.Null(DibLayout.Parse(indexed.AsSpan(0, 40 + 1000))); // 色表が切れた
+        Assert.Null(DibLayout.Parse(Dib(2, 2, 32, DibLayout.BiBitFields).AsSpan(0, 46))); // マスクが切れた
+        Assert.Null(DibLayout.Parse(Dib(1, 1, 24).AsSpan(0, 39)));
+        var core = Dib(1, 1, 24);
+        BitConverter.GetBytes(12).CopyTo(core, 0); // BITMAPCOREHEADER は扱わない
+        Assert.Null(DibLayout.Parse(core));
+        Assert.Null(DibLayout.Parse(Dib(1, 1, 8, compression: 1))); // RLE
+        Assert.Null(DibLayout.Parse(Dib(1, 1, 24, compression: DibLayout.BiBitFields)));
+        Assert.Null(DibLayout.Parse(Dib(1, 1, 8, colorsUsed: 257)));
+        Assert.Null(DibLayout.Parse(Dib(0, 1, 24)));
+        Assert.Null(DibLayout.Parse(Dib(1, 0, 24)));
+        Assert.Null(DibLayout.Parse(Dib(1, 1, 12, pixelBytes: 4)));
+
+        // 過大な大きさ（ヘッダーだけ）。桁あふれせずに拒否する
+        var huge = Dib(1, 1, 32);
+        BitConverter.GetBytes(int.MaxValue).CopyTo(huge, 4);
+        BitConverter.GetBytes(int.MinValue).CopyTo(huge, 8);
+        Assert.Null(DibLayout.Parse(huge));
+        BitConverter.GetBytes(30000).CopyTo(huge, 4);
+        BitConverter.GetBytes(30000).CopyTo(huge, 8);
+        Assert.Null(DibLayout.Parse(huge));
+        var planes = Dib(1, 1, 24);
+        BitConverter.GetBytes((ushort)2).CopyTo(planes, 12);
+        Assert.Null(DibLayout.Parse(planes));
+    }
+
+    [Theory]
+    [InlineData("shot#1.png")]
+    [InlineData("shot%20one.png")]
+    [InlineData("shot).png")]
+    [InlineData("shot(2).png")]
+    [InlineData("a&amp;b.png")]
+    [InlineData("q?.png")]
+    [InlineData("写真 1.png")]
+    [InlineData("photo.PNG")]
+    [InlineData("メモ#2-20261119-090503.png")]
+    public void R7_inserted_image_link_resolves_to_the_saved_file(string name)
+    {
+        const string Folder = "C:\\t\\doc";
+        const string Host = "img.markdowntrellis.invalid";
+        var markdown = TextFormatter.InsertLink(string.Empty, 0, 0, "代替", PastedImage.RelativeUrl(name), true).Replacement;
+        var html = Preview(markdown + "\n", host: Host);
+        var src = Regex.Match(html, "<img[^>]*src=\"([^\"]+)\"").Groups[1].Value;
+        Assert.StartsWith("https://" + Host + "/", src);
+        Assert.Equal(Path.Combine(Folder, "images", name), HtmlSanitizer.ResolveImagePath(Folder, Host, System.Net.WebUtility.HtmlDecode(src)));
+        Assert.DoesNotContain(".png)", Regex.Replace(html, "<[^>]+>", string.Empty));
+    }
+
+    [Theory]
+    [InlineData("COM¹")]
+    [InlineData("com².png")]
+    [InlineData("LPT³")]
+    [InlineData("COM0")]
+    [InlineData("lpt0.png")]
+    public void R7_superscript_and_zero_device_names_are_reserved(string name) => Assert.Null(PastedImage.Validate(name));
+
+    [Theory]
+    [InlineData("<h2 title=\"a>b\" data-line=\"4\">raw heading</h2>", "<h2 title=\"a>b\">raw heading</h2>")]
+    [InlineData("<abbr title=\"literal data-line=7 value\">abbr</abbr>", "<abbr title=\"literal data-line=7 value\">abbr</abbr>")]
+    [InlineData("<div title='x data-line=\"1\"' DATA-LINE=2>t</div>", "<div title='x data-line=\"1\"'>t</div>")]
+    [InlineData("<div\ndata-line = \"3\"\nclass=x>t</div>", "<div\nclass=x>t</div>")]
+    [InlineData("<input data-line checked>", "<input checked>")]
+    [InlineData("<br data-line=1/>", "<br>")] // 引用符なしの値は / を含む（HTMLの規則）
+    [InlineData("<br data-line=\"1\"/>", "<br/>")]
+    [InlineData("<!-- <p data-line=\"1\"> --><p>x</p>", "<!-- <p data-line=\"1\"> --><p>x</p>")]
+    [InlineData("a < b data-line=\"1\"", "a < b data-line=\"1\"")]
+    [InlineData("<span data-lines=\"1\" data-line-x=2>t</span>", "<span data-lines=\"1\" data-line-x=2>t</span>")]
+    public void R8_data_line_is_removed_by_attribute_not_by_text(string input, string expected) =>
+        Assert.Equal(expected, MarkdownRenderer.StripLineAttributes(input));
+
+    [Fact]
+    public void R8_raw_heading_with_quoted_angle_bracket_is_not_a_line_target()
+    {
+        var html = Preview("# 本物\n\n<h2 title=\"a>b\" data-line=\"4\">raw heading</h2>\n\n本文 <abbr title=\"literal data-line=7 value\">abbr</abbr>\n");
+        Assert.DoesNotMatch("<h2[^>]*data-line", html);
+        Assert.Contains("title=\"literal data-line=7 value\"", html);
+    }
+
+    [Fact]
+    public void R10_headings_inside_lists_quotes_html_and_indented_code_are_not_shifted()
+    {
+        const string Text = "- item\n  ## list heading\n\n## ordinary\n\n<div>\n# in html\n</div>\n\n- x\n\n  ```\n  # in fence\n  ```\n\n> ## quoted\n";
+        var result = Apply(Text, TextFormatter.ShiftHeadings(Text, 0, 0, 1)!);
+        Assert.Equal(Text.Replace("\n## ordinary", "\n### ordinary"), result);
+    }
+
+    [Theory]
+    [InlineData("    | h | j |\n    |---|---|\n    | a | b |", 6)]
+    [InlineData("text\n\n\t| h | j |\n\t|---|---|\n\t| a | b |", 8)]
+    [InlineData("- x\n\n  ```\n  |a|b|\n  |---|---|\n  ```", 13)]
+    public void R10_table_like_text_in_code_is_not_formatted(string text, int caret) =>
+        Assert.Null(TextFormatter.FormatTable(text, caret, caret, "\n"));
+
+    [Fact]
+    public void R10_table_next_to_code_is_still_formatted() =>
+        Assert.Equal("    code\n\n| a   | b   |\n| --- | --- |\n| 1   | 2   |", Format("    code\n\n|a|b|\n|---|---|\n|1|2|", 12));
+
+    private static string ApplyAll(string text, IEnumerable<TextEdit> edits)
+    {
+        foreach (var edit in edits.OrderByDescending(e => e.Start))
+        {
+            text = Apply(text, edit);
+        }
+
+        return text;
+    }
+
+    [Fact]
+    public void R11_empty_cursor_on_the_same_line_does_not_hide_the_selected_headings()
+    {
+        const string Text = "## A\r\n## B xyz\r\n## C\r\n";
+        var selection = (Text.IndexOf('#'), Text.IndexOf('B') + 1);
+        var cursor = Text.IndexOf("xyz", StringComparison.Ordinal) + 3;
+        var edits = TextFormatter.ShiftHeadingEdits(Text, [selection, (cursor, cursor)], 1);
+        Assert.Equal("### A\r\n### B xyz\r\n## C\r\n", ApplyAll(Text, edits));
+        Assert.Equal(2, edits.Count);
+    }
+
+    [Fact]
+    public void R11_overlapping_selections_change_each_heading_once_and_empty_cursors_mean_whole_document()
+    {
+        const string Text = "# A\n# B\n# C\n# D\n";
+        var lineB = Text.IndexOf('B');
+        var edits = TextFormatter.ShiftHeadingEdits(Text, [(0, lineB), (lineB - 2, lineB + 1), (Text.IndexOf('D'), Text.IndexOf('D') + 1)], 1);
+        Assert.Equal("## A\n## B\n# C\n## D\n", ApplyAll(Text, edits));
+        Assert.Equal("## A\n## B\n## C\n## D\n", ApplyAll(Text, TextFormatter.ShiftHeadingEdits(Text, [(1, 1), (5, 5)], 1)));
+        Assert.Empty(TextFormatter.ShiftHeadingEdits("# A\n", [(0, 0)], -1));
+    }
+
+    // --- 工程G 14G-2(c) 下線形式の見出しの行 ---
+
+    [Fact]
+    public void Setext_heading_line_is_the_text_line_not_the_underline()
+    {
+        var html = Preview("見出し下線\n===\n\n段落\n\n副見出し\n---\n\n本文\n\n複数行の\n見出し\n===\n");
+        Assert.Matches("<h1[^>]*data-line=\"0\"[^>]*>見出し下線", html);
+        Assert.Matches("<h2[^>]*data-line=\"5\"[^>]*>副見出し", html);
+        Assert.Matches("<h1[^>]*data-line=\"10\"[^>]*>複数行の", html);
+        Assert.Matches("<p[^>]*data-line=\"3\"[^>]*>段落", html);
+
+        var crlf = Preview("a\r\n\r\n見出し\r\n---\r\n");
+        Assert.Matches("<h2[^>]*data-line=\"2\"", crlf);
+        var fenced = MarkdownRenderer.RenderPreview(new RenderRequest("```markdown\n本文\n\n見出し\n===\n```\n", StripOuterFence: true)).Html;
+        Assert.Matches("<h1[^>]*data-line=\"3\"", fenced);
+    }
+
+    // --- 文言 ---
+
+    [Fact]
+    public void New_strings_exist_in_both_languages()
+    {
+        foreach (var key in new[] { "toc", "headingUp", "headingDown", "headingNoChange", "formatTable", "tableNotFound", "pasteImage", "pasteSaveFirst", "pasteNoImage", "pasteFileName", "pasteBadName", "pasteFailed", "copyHtml", "copiedHtml", "copiedHtmlImages", "linkNotFound", "warnEncoding", "statsDocument", "statsSelection", "headingUpHelp", "headingDownHelp", "formatTableHelp", "pasteImageHelp", "copyHtmlHelp" })
+        {
+            Assert.NotEqual(key, Strings.Get("ja", key));
+            Assert.NotEqual(Strings.Get("en", key), Strings.Get("ja", key));
+        }
     }
 }

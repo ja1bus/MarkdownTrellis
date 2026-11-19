@@ -8,8 +8,8 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <RootNamespace>MarkdownTrellis</RootNamespace>
     <AssemblyName>MarkdownTrellis</AssemblyName>
-    <Version>0.13.0</Version>
-    <FileVersion>0.13.0.0</FileVersion>
+    <Version>0.14.0</Version>
+    <FileVersion>0.14.0.0</FileVersion>
     <Product>MarkdownTrellis</Product>
     <Copyright>© ja1bus</Copyright>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>

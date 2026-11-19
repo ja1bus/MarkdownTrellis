@@ -13,7 +13,8 @@ public enum ImageMode
     Keep,
 }
 
-public sealed record SanitizeOptions(IReadOnlyCollection<string>? ExtraTags = null, ImageMode Images = ImageMode.Keep, string? ImageHost = null, bool PlainLinks = false);
+/// <param name="InteractiveCheckboxes">true ならチェックボックスに disabled を付けない（通常表示のプレビュー。クリックはパネル側で取り消す）。</param>
+public sealed record SanitizeOptions(IReadOnlyCollection<string>? ExtraTags = null, ImageMode Images = ImageMode.Keep, string? ImageHost = null, bool PlainLinks = false, bool InteractiveCheckboxes = false);
 
 public sealed record SanitizeResult(string Html, IReadOnlyDictionary<string, int> RejectedTags, int BlockedImages);
 
@@ -178,7 +179,10 @@ public static partial class HtmlSanitizer
             }
 
             attributes.RemoveAll(a => a.Name == "disabled");
-            attributes.Add(new HtmlAttribute("disabled", string.Empty));
+            if (!options.InteractiveCheckboxes)
+            {
+                attributes.Add(new HtmlAttribute("disabled", string.Empty));
+            }
         }
 
         if (token.Name == "img" && options.Images == ImageMode.Preview)
@@ -255,7 +259,19 @@ public static partial class HtmlSanitizer
             return null;
         }
 
-        var relative = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        return ResolveInFolder(folder, Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/'), ImageContentTypes.Keys);
+    }
+
+    /// <summary>Notepad++で開くMarkdownの拡張子。</summary>
+    public static readonly IReadOnlyList<string> MarkdownExtensions = [".md", ".markdown", ".mdown", ".mkd"];
+
+    /// <summary>
+    /// フォルダからの相対パスを、フォルダ配下の指定の拡張子のフルパスにする。
+    /// 空、<c>:</c> を含む、フォルダの外、拡張子が対象外なら null（ファイルの有無は見ない）。
+    /// </summary>
+    public static string? ResolveInFolder(string folder, string relativePath, IEnumerable<string> extensions)
+    {
+        var relative = relativePath.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
         if (relative.Length == 0 || relative.Contains(':', StringComparison.Ordinal))
         {
             return null;
@@ -269,7 +285,39 @@ public static partial class HtmlSanitizer
             return null;
         }
 
-        return ImageContentTypes.ContainsKey(Path.GetExtension(full)) ? full : null;
+        var extension = Path.GetExtension(full);
+        return extensions.Any(e => e.Equals(extension, StringComparison.OrdinalIgnoreCase)) ? full : null;
+    }
+
+    /// <summary>
+    /// プレビューの相対リンクを、文書フォルダ配下のMarkdownファイルのパスにする。
+    /// <c>#</c> と <c>?</c> 以降を除く。スキーム付き、先頭が <c>/</c> か <c>\</c>、フォルダの外、Markdown以外は null。
+    /// </summary>
+    public static string? ResolveLinkPath(string folder, string href)
+    {
+        var cut = href.IndexOfAny(['#', '?']);
+        var path = cut >= 0 ? href[..cut] : href;
+        if (path.Length == 0 || path[0] is '/' or '\\' || path.Contains(':', StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        string unescaped;
+        try
+        {
+            unescaped = Uri.UnescapeDataString(path);
+        }
+        catch (UriFormatException)
+        {
+            return null;
+        }
+
+        if (unescaped.Length == 0 || unescaped[0] is '/' or '\\')
+        {
+            return null;
+        }
+
+        return ResolveInFolder(folder, unescaped, MarkdownExtensions);
     }
 
     public static string ImageContentType(string path) => ImageContentTypes[Path.GetExtension(path)];

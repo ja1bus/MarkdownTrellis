@@ -227,7 +227,12 @@ internal sealed class LegacyToolbar
         ("link", null), ("table", "▦"), ("code", "</>"), ("codeblock", "{ }"),
     ];
 
-    private static readonly string[] MoreItems = ["italic", "strike", "quote", "image", "hr", string.Empty, "copyRichSelection"];
+    private static readonly string[] MoreItems =
+    [
+        "italic", "strike", "quote", "image", "pasteImage", "hr", string.Empty,
+        "headingUp", "headingDown", "formatTable", string.Empty,
+        "copyRichSelection", "copyHtml",
+    ];
 
     private const int Margin = 2;
     private const uint WmSetFont = 0x0030;

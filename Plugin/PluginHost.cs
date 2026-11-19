@@ -27,6 +27,8 @@ internal static unsafe class PluginHost
     private const string WindowClass = "MarkdownTrellisPanel";
     private const uint WmRenderDone = Native.WmApp + 1;
     private const uint WmJumpToSource = Native.WmApp + 2;
+    private const uint WmJumpToHeading = Native.WmApp + 3;
+    private const int SelectionWordLimitBytes = 200_000;
     private const nint RenderTimer = 1;
     private const nint CaretTimer = 2;
     private const nint LegacyTimer = 3;
@@ -57,6 +59,8 @@ internal static unsafe class PluginHost
     private static string? _pendingDialog;
     private static (nint Buffer, SyntaxFeature Feature, string Text)? _normalizeReview;
     private static int _lastCaretLine = -1;
+    private static string? _lastSelectionKey;
+    private static (nint Buffer, ClipboardImage Image)? _pendingImage;
     private static AppSettings _settings = new();
     private static string _language = "en";
     private static string _dataFolder = string.Empty;
@@ -186,6 +190,14 @@ internal static unsafe class PluginHost
             Separator(),
             new("copyRichSelection", CopyRichSelection),
             new("settings", () => OpenDialog("settings")),
+
+            // 0.14.0（区切りを含めて37項目。Exports.cs の呼び出し口は40個）
+            Separator(),
+            new("headingUp", () => ShiftHeadings(-1)),
+            new("headingDown", () => ShiftHeadings(1)),
+            new("formatTable", FormatTable),
+            new("pasteImage", PasteImage),
+            new("copyHtml", CopyHtml),
         ];
     }
 
@@ -222,6 +234,8 @@ internal static unsafe class PluginHost
                 // 前のタブの結果を表示しない。開いているダイアログは前のタブを対象にしていたので閉じる
                 _renderSequence++;
                 _normalizeReview = null;
+                _pendingImage = null;
+                _lastSelectionKey = null;
                 if (_shellReady)
                 {
                     _webView?.Post(Json(w => w.WriteString("type", "closeDialog")));
@@ -241,6 +255,8 @@ internal static unsafe class PluginHost
             case Native.ScnModified:
                 if (IsFromEditor(notification) && (notification->ModificationType & (Native.ScModInsertText | Native.ScModDeleteText)) != 0)
                 {
+                    // 選択の位置が同じでも中身が変わり得るので、次の通知で選択の数を送り直す
+                    _lastSelectionKey = null;
                     ScheduleRender(DebounceMs);
                 }
 
@@ -371,7 +387,7 @@ internal static unsafe class PluginHost
         }
 
         var shell = ReadShell();
-        _webView = new WebView(_panel, shell, OnShellMessage, OpenExternal, SaveCurrentFile, OnWebViewFailed);
+        _webView = new WebView(_panel, shell, OnShellMessage, OpenExternalUrl, SaveCurrentFile, OnWebViewFailed);
         Directory.CreateDirectory(_dataFolder);
         try
         {
@@ -505,7 +521,9 @@ internal static unsafe class PluginHost
     {
         string[] languageValues = ["system", "ja", "en"];
         string[] languageLabels = [Text("languageSystem"), "日本語", "English"];
-        var languages = languageValues.Select((value, i) => new DialogField(DialogFieldKind.Radio, languageLabels[i], isChecked: _settings.Language == value, tag: "language")).ToList();
+        // 想定外の値（手で編集した設定）は「Windowsに合わせる」として示す
+        var current = Array.IndexOf(languageValues, _settings.Language) >= 0 ? _settings.Language : "system";
+        var languages = languageValues.Select((value, i) => new DialogField(DialogFieldKind.Radio, languageLabels[i], isChecked: current == value, tag: "language")).ToList();
         var follow = new DialogField(DialogFieldKind.Check, Text("followCaret") + Text("followCaretLegacy"), isChecked: _settings.FollowCaret);
         var auto = new DialogField(DialogFieldKind.Radio, Text("engineAuto"), isChecked: !UseIeEngine, tag: "engine");
         var ie = new DialogField(DialogFieldKind.Radio, Text("engineIe"), isChecked: UseIeEngine, tag: "engine");
@@ -537,8 +555,9 @@ internal static unsafe class PluginHost
         var resumeFollow = followCaret && !_settings.FollowCaret;
         _settings.FollowCaret = followCaret;
 
-        var engineChanged = engine is "auto" or "ie" && _settings.PreviewEngine != engine;
-        if (engineChanged)
+        // 想定外の値は auto と同じに働くので、auto を保存しても表示方式は変わらない（再起動の案内は出さない）
+        var engineChanged = engine is "auto" or "ie" && (engine == "ie") != UseIeEngine;
+        if (engine is "auto" or "ie" && _settings.PreviewEngine != engine)
         {
             _settings.PreviewEngine = engine;
             UpdateMenuCheck();
@@ -674,7 +693,13 @@ internal static unsafe class PluginHost
                 case Native.WmTimer:
                     if (wParam == LegacyTimer)
                     {
+                        // 表示が終われば止め、次の SetBody で待ちが残ったときに再開する
                         _legacy?.Advance();
+                        if (_legacy is not { IsWaiting: true })
+                        {
+                            Native.KillTimer(hwnd, LegacyTimer);
+                        }
+
                         return 0;
                     }
 
@@ -693,7 +718,10 @@ internal static unsafe class PluginHost
                     DeliverRender();
                     return 0;
                 case WmJumpToSource:
-                    JumpToSource((int)wParam, (int)lParam);
+                    JumpToSource((int)wParam, (int)lParam, grabFocus: true);
+                    return 0;
+                case WmJumpToHeading:
+                    JumpToSource((int)wParam, (int)lParam, grabFocus: false);
                     return 0;
                 case Native.WmNotify:
                     var header = (NotifyHeader*)lParam;
@@ -855,13 +883,23 @@ internal static unsafe class PluginHost
     {
         var result = MarkdownRenderer.RenderPreview(request);
         var fence = FenceDetector.Detect(request.Text);
-        var detected = SyntaxDetector.Detect(request.Text, request.Features);
+
+        // プレビューの解析を共用し、全文をもう一度解析しない（外側フェンスを除外したときは位置が合わないので解析し直す）
+        var detected = result.Document is { } document
+            ? SyntaxDetector.Detect(document, request.Text, request.Features)
+            : SyntaxDetector.Detect(request.Text, request.Features);
+        var stats = TextStats.Count(request.Text);
         return Json(w =>
         {
             w.WriteString("type", "render");
             w.WriteNumber("sequence", sequence);
             w.WriteString("html", result.Html);
             w.WriteBoolean("isEmpty", request.Text.Length == 0);
+            w.WriteStartObject("stats");
+            w.WriteNumber("chars", stats.Characters);
+            w.WriteNumber("lines", stats.Lines);
+            w.WriteNumber("words", stats.Words);
+            w.WriteEndObject();
             w.WriteStartArray("features");
             foreach (var feature in Enum.GetValues<SyntaxFeature>())
             {
@@ -927,7 +965,7 @@ internal static unsafe class PluginHost
         // 表示の直前に、より新しい変換やタブ切替がなかったか確かめる
         if (payload is not null && sequence == _renderSequence && _legacy is not null)
         {
-            _legacy.SetBody(payload);
+            SetLegacyBody(payload);
         }
         else if (payload is not null && sequence == _renderSequence)
         {
@@ -937,41 +975,166 @@ internal static unsafe class PluginHost
         }
     }
 
+    /// <summary>
+    /// カーソル行（追従する設定のとき、行が変わったときだけ）と、選択範囲の文字数（選択が変わったときだけ）をパネルへ送る。
+    /// </summary>
     private static void PostCaret()
     {
-        // 追従しない設定では、カーソルの移動でプレビューを動かさない
-        if (!_settings.FollowCaret)
+        if (_webView is null)
         {
             return;
         }
 
-        var line = Editor.CurrentLine;
-        if (line != _lastCaretLine)
+        // 追従しない設定では、カーソルの移動でプレビューを動かさない
+        int? line = null;
+        if (_settings.FollowCaret)
         {
-            _lastCaretLine = line;
-            _webView?.Post(Json(w =>
+            var current = Editor.CurrentLine;
+            if (current != _lastCaretLine)
             {
-                w.WriteString("type", "caret");
-                w.WriteNumber("line", line);
-            }));
+                _lastCaretLine = current;
+                line = current;
+            }
         }
+
+        var selections = SelectionRanges();
+        var key = string.Join(';', selections.Select(s => s.Start + "-" + s.End));
+        var selectionChanged = key != _lastSelectionKey;
+        _lastSelectionKey = key;
+        if (line is null && !selectionChanged)
+        {
+            return;
+        }
+
+        TextCounts? counts = null;
+        var tooLarge = false;
+        if (selections.Count > 0)
+        {
+            var bytes = Editor.GetBytes();
+            var encoding = Editor.CurrentEncoding;
+            var total = selections.Sum(s => s.End - s.Start);
+            tooLarge = total > SelectionWordLimitBytes;
+            int chars = 0, lines = 0, words = 0;
+            foreach (var (start, end) in selections)
+            {
+                var text = encoding.GetString(bytes, start, end - start);
+                var part = tooLarge ? TextStats.Count(text) with { Words = 0 } : TextStats.Count(text);
+                chars += part.Characters;
+                lines += part.Lines;
+                words += part.Words;
+            }
+
+            counts = new TextCounts(chars, lines, words);
+        }
+
+        _webView.Post(Json(w =>
+        {
+            w.WriteString("type", "caret");
+            if (line is { } value)
+            {
+                w.WriteNumber("line", value);
+            }
+
+            if (selectionChanged)
+            {
+                if (counts is { } c)
+                {
+                    w.WriteStartObject("selection");
+                    w.WriteNumber("chars", c.Characters);
+                    w.WriteNumber("lines", c.Lines);
+                    if (tooLarge)
+                    {
+                        w.WriteNull("words");
+                    }
+                    else
+                    {
+                        w.WriteNumber("words", c.Words);
+                    }
+
+                    w.WriteEndObject();
+                }
+                else
+                {
+                    w.WriteNull("selection");
+                }
+            }
+        }));
     }
 
-    private static void JumpToSource(int sequence, int line)
+    /// <summary>空でない選択のバイト位置（複数選択・矩形選択は各選択）。</summary>
+    private static List<(int Start, int End)> SelectionRanges()
     {
-        if (_legacy is not null || !_panelVisible || _displayedRenderSequence <= 0 ||
-            sequence != _displayedRenderSequence || sequence != _renderSequence ||
-            _previewBuffer != CurrentBuffer || _previewEditor != Editor.Current ||
-            line < 0 || line >= Editor.Send(Native.SciGetLineCount)) return;
+        var result = new List<(int, int)>();
+        var count = (int)Editor.Send(Native.SciGetSelections);
+        for (var i = 0; i < count; i++)
+        {
+            var start = (int)Editor.Send(Native.SciGetSelectionNStart, i);
+            var end = (int)Editor.Send(Native.SciGetSelectionNEnd, i);
+            if (end > start)
+            {
+                result.Add((start, end));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>プレビューからの要求が、表示中の最新の変換・同じ文書とビュー・有効な行を指しているか。</summary>
+    private static bool IsCurrentPreviewLine(int sequence, int line) =>
+        IsCurrentPreview(sequence) && line >= 0 && line < Editor.Send(Native.SciGetLineCount);
+
+    /// <summary>プレビューからの要求が、表示中の最新の変換・同じ文書とビューのものか。</summary>
+    private static bool IsCurrentPreview(int sequence) =>
+        _legacy is null && _panelVisible && _displayedRenderSequence > 0 &&
+        sequence == _displayedRenderSequence && sequence == _renderSequence &&
+        _previewBuffer == CurrentBuffer && _previewEditor == Editor.Current;
+
+    private static void JumpToSource(int sequence, int line, bool grabFocus)
+    {
+        if (!IsCurrentPreviewLine(sequence, line)) return;
 
         // この移動を原文→プレビューへ送り返さず、閲覧位置を維持する。
         _lastCaretLine = line;
-        Editor.GoToLine(line);
+        Editor.GoToLine(line, grabFocus);
+    }
+
+    /// <summary>プレビューのチェックボックスに対応する原文の行の [ ] と [x] を切り替える。</summary>
+    private static void ToggleTask(int sequence, int line)
+    {
+        if (!IsCurrentPreviewLine(sequence, line))
+        {
+            return;
+        }
+
+        if (Editor.IsReadOnly)
+        {
+            PostToast(Text("warnReadOnly"));
+            return;
+        }
+
+        if (Editor.ToggleTask(line) == 2)
+        {
+            PostToast(Text("warnEncoding"));
+        }
+    }
+
+    /// <summary>IEの表示に書く。読み込みの途中で書けなければ、タイマーで書けるまで待つ。</summary>
+    private static void SetLegacyBody(string html)
+    {
+        _legacy!.SetBody(html);
+        if (_legacy.IsWaiting)
+        {
+            Native.SetTimer(_panel, LegacyTimer, LegacyPollMs, 0);
+        }
     }
 
     private static void PostStatus(string textKey, string actionKey, string command)
     {
-        _legacy?.SetText(Text(textKey));
+        if (_legacy is not null)
+        {
+            SetLegacyBody("<p>" + System.Net.WebUtility.HtmlEncode(Text(textKey)) + "</p>");
+        }
+
         _webView?.Post(Json(w =>
         {
             w.WriteString("type", "status");
@@ -1006,7 +1169,7 @@ internal static unsafe class PluginHost
         _webView?.Post(Json(w =>
         {
             w.WriteString("type", "init");
-            w.WriteString("language", _settings.Language);
+            w.WriteString("language", _language);
             w.WriteString("version", Version);
             w.WriteStartObject("strings");
             foreach (var item in Strings.All(_language))
@@ -1049,9 +1212,22 @@ internal static unsafe class PluginHost
                     root.TryGetProperty("line", out var lineValue) && lineValue.ValueKind == JsonValueKind.Number && lineValue.TryGetInt32(out var line))
                 {
                     // WebView2のコールバックを抜けてから移動し、ブラウザーにフォーカスを戻させない。
-                    Native.PostMessage(_panel, WmJumpToSource, sequence, line);
+                    // 目次からの移動（focus: false）はフォーカスをパネルに残す。
+                    var focus = !(root.TryGetProperty("focus", out var focusValue) && focusValue.ValueKind == JsonValueKind.False);
+                    Native.PostMessage(_panel, focus ? WmJumpToSource : WmJumpToHeading, sequence, line);
                 }
 
+                break;
+            case "toggleTask":
+                if (root.TryGetProperty("sequence", out var taskSequenceValue) && taskSequenceValue.ValueKind == JsonValueKind.Number && taskSequenceValue.TryGetInt32(out var taskSequence) &&
+                    root.TryGetProperty("line", out var taskLineValue) && taskLineValue.ValueKind == JsonValueKind.Number && taskLineValue.TryGetInt32(out var taskLine))
+                {
+                    ToggleTask(taskSequence, taskLine);
+                }
+
+                break;
+            case "pasteImage":
+                SavePastedImage(Str("name"), Str("alt"));
                 break;
             case "ready":
                 _shellReady = true;
@@ -1122,7 +1298,9 @@ internal static unsafe class PluginHost
                 ScheduleRender(1);
                 break;
             case "openLink":
-                OpenExternal(Str("url"));
+                var linkSequence = root.TryGetProperty("sequence", out var linkSequenceValue) && linkSequenceValue.ValueKind == JsonValueKind.Number &&
+                    linkSequenceValue.TryGetInt32(out var parsedSequence) ? parsedSequence : 0;
+                OpenLink(Str("url"), linkSequence);
                 break;
             case "normalizePreview":
                 PostNormalizePreview(Enum.Parse<SyntaxFeature>(Str("feature")));
@@ -1192,7 +1370,8 @@ internal static unsafe class PluginHost
         }
     }
 
-    private static void OpenExternal(string url)
+    /// <summary>外部のURL（http、https、mailto）だけを既定のアプリで開く。</summary>
+    private static void OpenExternalUrl(string url)
     {
         if (HtmlSanitizer.IsExternalUrl(url))
         {
@@ -1200,11 +1379,87 @@ internal static unsafe class PluginHost
         }
     }
 
+    /// <summary>プレビューのリンク。外部URLは既定のアプリで、相対リンクの .md は表示元の文書のフォルダで開く。</summary>
+    private static void OpenLink(string url, int sequence)
+    {
+        if (HtmlSanitizer.IsExternalUrl(url))
+        {
+            OpenExternalUrl(url);
+            return;
+        }
+
+        // 相対リンクは表示中の最新の変換・同じ文書とビューのときだけ解決する（タブ切替直後の古い表示から別のフォルダで開かない）
+        if (!IsCurrentPreview(sequence))
+        {
+            return;
+        }
+
+        OpenLinkedMarkdown(url);
+    }
+
+    /// <summary>相対リンクが文書フォルダ配下のMarkdownファイルなら、Notepad++で開く。</summary>
+    private static void OpenLinkedMarkdown(string href)
+    {
+        var path = CurrentPath();
+        if (_legacy is not null || !Path.IsPathFullyQualified(path) || Path.GetDirectoryName(path) is not { } folder)
+        {
+            return;
+        }
+
+        var target = HtmlSanitizer.ResolveLinkPath(folder, href);
+        if (target is null)
+        {
+            return;
+        }
+
+        if (!File.Exists(target))
+        {
+            PostToast(Text("linkNotFound"));
+            return;
+        }
+
+        fixed (char* file = target)
+        {
+            Native.SendMessage(Npp.Npp, Native.NppmDoOpen, 0, (nint)file);
+        }
+    }
+
     private static void SaveCurrentFile() => Native.PostMessage(Npp.Npp, Native.WmCommand, Native.IdmFileSave, 0);
 
     // --- 編集 ---
 
-    private static void Format(Func<string, int, int, TextEdit> action, bool lineLevel = false)
+    private static void Format(Func<string, int, int, TextEdit> action, bool lineLevel = false) =>
+        TryFormat(action, out _, lineLevel);
+
+    /// <summary>
+    /// 書式の操作を適用する。読み取り専用・文字コードとして読めない文書では通知して false。
+    /// edit は最後に適用した編集（どの選択も変えなければ null）。
+    /// </summary>
+    private static bool TryFormat(Func<string, int, int, TextEdit?> action, out TextEdit? edit, bool lineLevel = false, bool firstOnly = false)
+    {
+        edit = null;
+        if (Editor.IsReadOnly)
+        {
+            PostToast(Text("warnReadOnly"));
+            return false;
+        }
+
+        if (!Editor.TryApply(action, out edit, lineLevel, firstOnly))
+        {
+            PostToast(Text("warnEncoding"));
+            return false;
+        }
+
+        if (edit?.EmphasisIneffective == true)
+        {
+            PostToast(Text("warnEmphasis"));
+        }
+
+        return true;
+    }
+
+    /// <summary>見出しのレベルを1つ変える。選択がなければ文書全体、あれば選択した行。</summary>
+    private static void ShiftHeadings(int delta)
     {
         if (Editor.IsReadOnly)
         {
@@ -1212,10 +1467,212 @@ internal static unsafe class PluginHost
             return;
         }
 
-        var edit = Editor.Apply(action, lineLevel);
-        if (edit?.EmphasisIneffective == true)
+        // 空でない選択が覆う行の和集合（なければ文書全体）の見出しを、それぞれ1回だけ変える。空のカーソルは対象を決めない
+        if (!Editor.TryApplyEdits((text, selections) => TextFormatter.ShiftHeadingEdits(text, selections, delta), out var count))
         {
-            PostToast(Text("warnEmphasis"));
+            PostToast(Text("warnEncoding"));
+            return;
+        }
+
+        if (count == 0)
+        {
+            PostToast(Text("headingNoChange"));
+        }
+    }
+
+    /// <summary>カーソル（最初の選択）を含む表の列幅をそろえる。</summary>
+    private static void FormatTable()
+    {
+        var found = false;
+        var eol = Editor.Eol;
+        Func<string, int, int, TextEdit?> action = (text, start, end) =>
+        {
+            var edit = TextFormatter.FormatTable(text, start, end, eol);
+            found = edit is not null;
+            return edit;
+        };
+
+        if (TryFormat(action, out _, firstOnly: true) && !found)
+        {
+            PostToast(Text("tableNotFound"));
+        }
+    }
+
+    /// <summary>書式付きコピーと同じHTMLを、HTMLのソースの文字列としてコピーする。</summary>
+    private static void CopyHtml()
+    {
+        var state = StateOf(CurrentBuffer);
+        var request = new RenderRequest(Editor.GetText(), state.Features, state.StripOuterFence, _settings.ExtraHtmlTags);
+        var result = MarkdownRenderer.RenderForCopy(request);
+        var ok = Clipboard.Set(Npp.Npp, result.Html);
+        PostToast(!ok ? Text("copyFailed") : result.LocalImages > 0 ? string.Format(Text("copiedHtmlImages"), result.LocalImages) : Text("copiedHtml"));
+    }
+
+    /// <summary>クリップボードの画像を文書フォルダの images へ保存して挿入する。保存の前に名前と代替テキストを確かめる。</summary>
+    private static void PasteImage()
+    {
+        _pendingImage = null;
+        if (Editor.IsReadOnly)
+        {
+            PostToast(Text("warnReadOnly"));
+            return;
+        }
+
+        if (!Editor.IsEncodingValid)
+        {
+            PostToast(Text("warnEncoding"));
+            return;
+        }
+
+        var path = CurrentPath();
+        if (!Path.IsPathFullyQualified(path) || Path.GetDirectoryName(path) is not { } folder)
+        {
+            PostToast(Text("pasteSaveFirst"));
+            return;
+        }
+
+        ClipboardImage? image;
+        try
+        {
+            image = Clipboard.ReadImage(Npp.Npp);
+        }
+        catch (IOException)
+        {
+            PostToast(Text("copyFailed"));
+            return;
+        }
+
+        if (image is null)
+        {
+            PostToast(Text("pasteNoImage"));
+            return;
+        }
+
+        var images = Path.Combine(folder, PastedImage.FolderName);
+        var name = PastedImage.MakeUnique(PastedImage.DefaultName(path, DateTime.Now), n => File.Exists(Path.Combine(images, n)));
+        _pendingImage = (CurrentBuffer, image);
+
+        if (_webViewError is null && _legacy is null)
+        {
+            if (!_panelVisible)
+            {
+                ShowPanel();
+                _settings.PanelVisible = true;
+                SaveSettings();
+            }
+
+            if (_webView is { IsReady: true } && _shellReady)
+            {
+                _webView.Post(Json(w =>
+                {
+                    w.WriteString("type", "dialog");
+                    w.WriteString("kind", "pasteImage");
+                    w.WriteString("name", name);
+                    w.WriteString("text", string.Empty);
+                }));
+                _webView.Focus();
+                return;
+            }
+        }
+
+        DialogField nameField = new(DialogFieldKind.Text, Text("pasteFileName"), name);
+        DialogField altField = new(DialogFieldKind.Text, Text("imageAlt"));
+        if (NativeDialog.Show(Npp.Npp, Text("pasteImage").TrimEnd('.'), [nameField, altField], Text("insert"), Text("cancel"), null, 260))
+        {
+            SavePastedImage(nameField.Value, altField.Value);
+        }
+        else
+        {
+            _pendingImage = null;
+        }
+    }
+
+    /// <summary>ダイアログで確定した名前で画像を保存し、カーソル位置に挿入する。</summary>
+    private static void SavePastedImage(string requestedName, string alt)
+    {
+        var pending = _pendingImage;
+        _pendingImage = null;
+        if (pending is null || pending.Value.Buffer != CurrentBuffer)
+        {
+            return;
+        }
+
+        var path = CurrentPath();
+        if (!Path.IsPathFullyQualified(path) || Path.GetDirectoryName(path) is not { } folder)
+        {
+            PostToast(Text("pasteSaveFirst"));
+            return;
+        }
+
+        if (PastedImage.Validate(requestedName) is not { } validName)
+        {
+            PostToast(Text("pasteBadName"));
+            return;
+        }
+
+        // ダイアログを開いている間に読み取り専用・読めないバイトになっていれば、ファイルを作る前に中止する
+        if (Editor.IsReadOnly)
+        {
+            PostToast(Text("warnReadOnly"));
+            return;
+        }
+
+        if (!Editor.IsEncodingValid)
+        {
+            PostToast(Text("warnEncoding"));
+            return;
+        }
+
+        var images = Path.Combine(folder, PastedImage.FolderName);
+        var root = Path.GetFullPath(folder);
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+        var target = Path.GetFullPath(Path.Combine(images, validName));
+        string name;
+        try
+        {
+            // 変換はファイルを作る前に済ませる（失敗しても文書フォルダに何も残さない）
+            var png = PngWriter.Encode(pending.Value.Image);
+            Directory.CreateDirectory(images);
+            for (var attempt = 0; ; attempt++)
+            {
+                name = PastedImage.MakeUnique(validName, n => File.Exists(Path.Combine(images, n)));
+                target = Path.GetFullPath(Path.Combine(images, name));
+                if (!target.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    PostToast(Text("pasteBadName"));
+                    return;
+                }
+
+                try
+                {
+                    PngWriter.WriteNew(target, png, root);
+                    break;
+                }
+                catch (IOException ex) when (PngWriter.IsAlreadyExists(ex) && attempt < 20)
+                {
+                    // 確かめた後に同じ名前のファイルが作られた。既存のファイルは変えずに次の番号を試す
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            Log(new IOException("Failed to save the pasted image: " + target, ex));
+            PostToast(string.Format(Text("pasteFailed"), target));
+            return;
+        }
+
+        var url = PastedImage.RelativeUrl(name);
+        if (!TryFormat((t, s, e) => TextFormatter.InsertLink(t, s, e, alt, url, isImage: true), out _))
+        {
+            // 挿入できなかった（通知済み）。今回作ったファイルだけを片付ける
+            try
+            {
+                File.Delete(target);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log(new IOException("Failed to remove the pasted image after the insertion failed: " + target, ex));
+            }
         }
     }
 
@@ -1223,6 +1680,12 @@ internal static unsafe class PluginHost
     {
         var bytes = Editor.GetBytes();
         var encoding = Editor.CurrentEncoding;
+        if (!Editor.RoundTrips(bytes, encoding))
+        {
+            // 位置を正しく求められない。続く書式の操作が中止して通知する
+            return false;
+        }
+
         var start = encoding.GetCharCount(bytes, 0, (int)Editor.Send(Native.SciGetSelectionNStart, 0));
         var end = encoding.GetCharCount(bytes, 0, (int)Editor.Send(Native.SciGetSelectionNEnd, 0));
         return TextFormatter.ToggleCodeFence(encoding.GetString(bytes), start, end, Editor.Eol) is not null;
@@ -1230,6 +1693,22 @@ internal static unsafe class PluginHost
 
     private static void OpenDialog(string kind)
     {
+        // 挿入のダイアログは、挿入できない文書（読み取り専用・読めないバイト）では開かずに知らせる
+        if (kind is "codeblock" or "table" or "link" or "image")
+        {
+            if (Editor.IsReadOnly)
+            {
+                PostToast(Text("warnReadOnly"));
+                return;
+            }
+
+            if (!Editor.IsEncodingValid)
+            {
+                PostToast(Text("warnEncoding"));
+                return;
+            }
+        }
+
         if (kind == "codeblock" && IsInCodeBlock())
         {
             Format((t, s, e) => TextFormatter.ToggleCodeFence(t, s, e, Editor.Eol) ?? new TextEdit(s, 0, string.Empty, s, e), lineLevel: true);
@@ -1366,7 +1845,12 @@ internal static unsafe class PluginHost
             return;
         }
 
-        Editor.ReplaceAll(FenceDetector.Unwrap(text, fence));
+        if (!Editor.ReplaceAll(FenceDetector.Unwrap(text, fence)))
+        {
+            PostToast(Text("warnEncoding"));
+            return;
+        }
+
         StateOf(CurrentBuffer).StripOuterFence = false;
         ScheduleRender(1);
     }
@@ -1416,7 +1900,12 @@ internal static unsafe class PluginHost
         var result = Normalizer.Apply(text, feature);
         if (result.Changes.Count > 0)
         {
-            Editor.ReplaceAll(result.Text);
+            if (!Editor.ReplaceAll(result.Text))
+            {
+                PostToast(Text("warnEncoding"));
+                return;
+            }
+
             ScheduleRender(1);
         }
     }

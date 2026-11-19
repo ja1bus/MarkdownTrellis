@@ -10,10 +10,10 @@ public enum InlineStyle { Bold, Italic, Strikethrough, Code }
 
 public enum LineStyle { BulletList, NumberedList, TaskList, Quote }
 
-/// <summary>文書の一部の置換と、置換後の選択範囲。位置はUTF-16の文字位置。</summary>
 /// <summary>選択範囲と、それが含まれる行。</summary>
 public readonly record struct SelectionSpan(int Start, int End, int FirstLine, int LastLine);
 
+/// <summary>文書の一部の置換と、置換後の選択範囲。位置はUTF-16の文字位置。</summary>
 public sealed record TextEdit(int Start, int Length, string Replacement, int SelectionStart, int SelectionEnd, bool EmphasisIneffective = false);
 
 /// <summary>書式ボタンの変換。Notepad++に依存しない純粋な処理とする。</summary>

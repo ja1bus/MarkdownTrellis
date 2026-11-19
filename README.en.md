@@ -8,10 +8,18 @@ MarkdownTrellis is a Notepad++ plugin that makes Markdown easier to edit. It add
 
 - Preview: updates as you type and appears in a Notepad++ docking panel.
 - Go to source: double-click preview text to move the editor cursor to the start of the matching block (normal preview only; links are excluded).
+- Contents: choose a heading from **Contents ▾** on the panel to scroll the preview to it and move the editor cursor to its line (normal preview only).
+- Linked checkboxes: click a task checkbox in the preview to switch `[ ]` and `[x]` in the source (normal preview only; undoable).
 - Formatting buttons: bold, italic, strikethrough, inline code, headings, bulleted list, numbered list, checklist, quote, code block, table, link, image, horizontal rule
+- Promote and demote headings: raise or lower the headings in the selected lines (or the whole document when nothing is selected) by one level.
+- Format Table: aligns the columns of the table at the cursor (full-width characters count as two).
+- Paste Image: saves the clipboard image as a PNG in the `images` folder next to the document and inserts it (saved documents only).
+- Links to Markdown files: a relative link in the preview to a `.md` (or similar) file under the document's folder opens in Notepad++ (normal preview only).
+- Text statistics: shows the number of characters, lines, and words (approximate) in the document and the selection (normal preview only).
 - Copy Source: copies the whole document exactly as written, including unsaved changes.
 - Copy Formatted: copies the preview with its formatting. Paste it into Teams, an email, and so on to keep headings, tables, bold text, and links.
 - Copy Selection Formatted: copies only the selected text with formatting.
+- Copy HTML: copies the same HTML as Copy Formatted, as source text.
 - Syntax: documents are shown as GFM (GitHub Flavored Markdown). Frontmatter is not shown in the preview.
 - Extra syntax: enable alerts, footnotes, math (shown as text), containers, highlight, wiki links, and definition lists per tab.
 - Outer code fence detection: notifies you when the whole document is wrapped in ```` ```markdown ````. You can remove just the two outer lines (undoable).
@@ -24,7 +32,8 @@ Editing, saving, and undo use Notepad++ itself. The preview is read-only. Editin
 - Document content is not sent anywhere. There is no automatic update or update check.
 - The preview runs no scripts and shows only allowed tags and attributes. Tags that are not allowed are shown as text.
 - External images are not loaded. Local images are shown only from under the document's folder.
-- Links open in your default browser only when you click them.
+- Links open in your default browser only when you click them. Relative links to Markdown files under the document's folder open in Notepad++.
+- Paste Image writes only to the `images` folder next to the document and never overwrites an existing file.
 
 ## Requirements
 
@@ -41,6 +50,7 @@ If WebView2 cannot start, the plugin automatically switches to a fallback previe
 - The panel title shows [Simple preview].
 - The panel uses standard Windows buttons. Formatting, inserting, copying, extra syntax, and settings remain available.
 - There are no notifications such as outer code fence detection, no syntax normalization, and no scrolling to the cursor line. Removing an outer code fence is still available from the menu.
+- There is no Contents menu, no linked checkboxes, no opening of linked Markdown files, no text statistics, and no double-click navigation to the source. Promote and demote headings, Format Table, Paste Image, and Copy HTML are available from **More** and the menu.
 - The IE engine is less protected than WebView2 and may be removed from Windows in the future.
 
 On PCs that switch to the fallback preview, each startup waits while WebView2 is tried and fails. Set the preview engine in Settings to **IE engine**, or check **Plugins** > **MarkdownTrellis** > **Use IE Engine**, to use the fallback preview without trying WebView2 (applies after restarting Notepad++).
@@ -149,7 +159,7 @@ pwsh -File tools\package-release.ps1
 |---|---|
 | `MarkdownTrellis.csproj` | The plugin (NativeAOT shared library) |
 | `Plugin/` | Integration with Notepad++, Scintilla, WebView2, the IE engine, and the clipboard |
-| `Core/` | Logic independent of Notepad++ (Markdown conversion, HTML checks, formatting operations, display strings) |
+| `Core/` | Logic independent of Notepad++ (Markdown conversion, HTML checks, formatting operations, text statistics, pasted image checks, display strings) |
 | `Assets/shell.html` | Panel toolbar and preview frame (embedded in the DLL) |
 | `Tests/` | Unit tests for `Core` (xUnit) |
 | `tools/` | Publishing the DLL and creating the Release ZIP |
